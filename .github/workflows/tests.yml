@@ -1,0 +1,36 @@
+name: Tests
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: 3.7
+
+    - name: Install Poetry
+      uses: snok/install-poetry@v1
+      with:
+        version: 1.4.2
+
+    - name: Install the package and dependencies
+      run: |
+        poetry install
+
+    - name: Run tests
+      run: |
+        poetry run make all-checks

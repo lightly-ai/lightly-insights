@@ -1,0 +1,376 @@
+<!-- report_template.html -->
+<!doctype html>
+<html lang="en">
+
+<head>
+  <!-- Responsive meta tag -->
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+  <!-- Bootstrap CSS -->
+  <!-- <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootswatch@5/dist/flatly/bootstrap.min.css"> -->
+  <link rel="stylesheet" href="./static/cdn.jsdelivr.net_npm_bootswatch@5_dist_flatly_bootstrap.min.css">
+  <link rel="icon" type="image/x-icon" href="./static/favicon.png">
+  <title>Lightly Insights</title>
+
+  <style>
+    /* Custom styles for square boxes */
+    .square-box {
+      position: relative;
+      /* This enables absolute positioning for child elements */
+      width: 100%;
+      /* Responsive width */
+      overflow: hidden;
+      /* Hide anything outside the box */
+    }
+
+    .square-box::before {
+      content: "";
+      /* Add a pseudo-element inside the box */
+      display: block;
+      /* Block level */
+      padding-top: 100%;
+      /* Top padding is based on the width of the element, making it square */
+    }
+
+    .square-box img {
+      position: absolute;
+      top: 50%;
+      /* Push the image 50% from the top of the container */
+      left: 50%;
+      /* Push the image 50% from the left of the container */
+      transform: translate(-50%, -50%);
+      /* Offset the image position by its own size to center it */
+      max-width: 100%;
+      /* Limit image width to not exceed the container */
+      max-height: 100%;
+      /* Limit image height to not exceed the container */
+    }
+  </style>
+
+</head>
+
+<body>
+  <div class="container">
+
+    <!-- Heading and top table -->
+
+    <div id="section-grid-layout" class="my-5">
+      <h1 class="mb-4">Lightly Insights</h1>
+
+      <table class="table table-hover">
+        <tbody>
+          <tr>
+            <th scope="row">Image Folder</th>
+            <td>{{ image_analysis.image_folder }}</td>
+          </tr>
+          <tr>
+            <th scope="row">Date Generated</th>
+            <td>{{ date_generated }}</td>
+          </tr>
+        </tbody>
+      </table>
+
+    </div>
+
+    <!-- Overview cards -->
+
+    <div id="section-grid-layout" class="my-5">
+
+      <div class="row">
+        <div class="col-lg-6 mb-3">
+          <div class="card text-white bg-primary">
+            <!-- <div class="card-header">Header</div> -->
+            <div class="card-body">
+              <h3 class="card-titl mb-3">{{ image_analysis.num_images }} Images</h4>
+
+                <table class="table table-hover">
+                  <tbody>
+                    <tr class="table-primary">
+                      <th scope="row">Median size </th>
+                      <td>{{ image_analysis.median_size[0] }} × {{ image_analysis.median_size[1] }}</td>
+                    </tr>
+                    <tr class="table-primary">
+                      <th scope="row">
+                        Images without a label
+                        {% if filename_insights.num_images_no_label > 0 %}
+                        <span class="text-secondary">*</span>
+                        {% endif %}
+                      </th>
+                      <td>{{ filename_insights.num_images_no_label }}</td>
+                    </tr>
+                    <tr class="table-primary">
+                      <th scope="row">Images with 0 objects</th>
+                      <td>{{ object_detection_analysis.num_images_zero_objects }}</td>
+                    </tr>
+                    <tr class="table-primary">
+                      <th scope="row">Avg objects per image</th>
+                      <td>{{ "{0:.1f}".format(object_detection_analysis.total.num_objects / image_analysis.num_images)
+                        }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                {% if filename_insights.num_images_no_label > 0 %}
+                <p class="card-text text-secondary">* Their filenames were exported to images_no_label.txt.</p>
+                {% endif %}
+
+            </div>
+          </div>
+        </div>
+        <div class="col-lg-6">
+          <div class="card text-white bg-secondary">
+            <!-- <div class="card-header">Header</div> -->
+            <div class="card-body">
+              <h3 class="card-title mb-3">{{ object_detection_analysis.total.num_objects }} Objects</h4>
+
+                <table class="table table-hover">
+                  <tbody>
+                    <tr class="table-secondary">
+                      <th scope="row">Num classes</th>
+                      <td>{{ object_detection_insights.num_classes }}</td>
+                    </tr>
+                    <tr class="table-secondary">
+                      <th scope="row">Avg objects per class</th>
+                      <td>{{ "{0:.1f}".format(object_detection_analysis.total.num_objects /
+                        object_detection_insights.num_classes) }}</td>
+                    </tr>
+                    <tr class="table-secondary">
+                      <th scope="row">Avg images per class</th>
+                      <td>{{ "{0:.1f}".format(image_analysis.num_images / object_detection_insights.num_classes) }}</td>
+                    </tr>
+                    <tr class="table-secondary">
+                      <th scope="row">Avg size</th>
+                      <td>{{ "{0:.1f}".format(object_detection_analysis.total.avg_size[0]) }} × {{
+                        "{0:.1f}".format(object_detection_analysis.total.avg_size[1]) }}</td>
+                    </tr>
+                    <tr class="table-secondary">
+                      <th scope="row">Avg area</th>
+                      <td>{{ "{0:.0f}".format(100 * object_detection_analysis.total.avg_rel_area) }} %</td>
+                    </tr>
+                  </tbody>
+                </table>
+
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Sample Images -->
+
+    <div id="section-grid-layout" class="my-5">
+
+      <h3>Sample Images</h3>
+
+      <div class="row">
+        {% for sample_image in image_insights.sample_images %}
+        <!-- Four equal columns -->
+        <div class="col-6 col-md-3 g-3">
+          <div class="square-box">
+            <img src="{{ sample_image.path }}" class="img-fluid rounded" alt="{{ sample_image.filename }}">
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+
+    </div>
+
+    <!-- Image Size Insights -->
+
+    <div id="section-grid-layout" class="my-5">
+
+      <div class="card border-primary">
+        <h4 class="card-header">Image Size Insights</h4>
+        <div class="card-body">
+
+          <div class="row">
+
+            <div class="col-lg-6">
+              <img src="{{ image_insights.image_size_plot }}" class="img-fluid" alt="Image Size Plot">
+            </div>
+
+            <div class="col-lg-6">
+
+              <table class="table table-hover mt-5">
+                <thead>
+                  <tr>
+                    <th scope="col">Width × Height</th>
+                    <th scope="col">Num Images</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for image_size, num_images in image_insights.image_sizes_most_common %}
+                  <tr>
+                    <td>{{ image_size[0] }} × {{ image_size[1] }}</td>
+                    <td>{{ num_images }}</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Object Detection Insights -->
+
+    <div id="section-grid-layout" class="my-5">
+
+      <div class="card border-primary">
+        <h4 class="card-header">Object Detection Insights</h4>
+        <div class="card-body">
+          <h4 class="card-title">{{ object_detection_analysis.total.num_objects }} Objects of {{ object_detection_insights.num_classes }} Classes</h4>
+
+          <div class="col-lg-6">
+
+            <table class="table table-hover mt-4">
+              <tbody>
+                <tr>
+                  <th scope="row">Avg size</th>
+                  <td>{{ "{0:.1f}".format(object_detection_analysis.total.avg_size[0]) }} × {{
+                    "{0:.1f}".format(object_detection_analysis.total.avg_size[1]) }}</td>
+                </tr>
+                <tr>
+                  <th scope="row">Avg area</th>
+                  <td>{{ "{0:.0f}".format(100 * object_detection_analysis.total.avg_rel_area) }} %</td>
+                </tr>
+              </tbody>
+            </table>
+
+          </div>
+
+
+          {% with plots=object_detection_insights.plots %}
+          {% include 'plots.html' %}
+          {% endwith %}
+
+          <table class="table table-sm table-hover">
+            <thead>
+              <tr>
+                <th class="col-3" scope="col">Class</th>
+                <th class="col-1" scope="col">Num Objects</th>
+                <th class="col-8" scope="col">Bar Representation</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for class_id in object_detection_insights.class_ids_most_common %}
+              {% set class = object_detection_analysis.classes[class_id] %}
+              <tr>
+                <td class="col-3">{{ class.class_name }}</td>
+                <td class="col-1">{{ class.num_objects }}</td>
+                <td class="col-8">
+                  <div class="progress mt-1">
+                    <div class="progress-bar" role="progressbar"
+                      style="width: {{ class.num_objects / object_detection_analysis.total.num_objects * 100 }}%;"
+                      aria-valuenow="25" aria-valuemin="0" aria-valuemax="100"></div>
+                  </div>
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Class Insights -->
+
+    <div id="section-grid-layout" class="my-5">
+      <div class="card border-primary">
+        <h4 class="card-header">Class Insights</h4>
+        <div class="card-body">
+
+          <h4 class="card-title">{{ object_detection_insights.num_classes }} Classes</h4>
+          <p>Choose a class:</p>
+
+          <!-- Nav pills -->
+          <ul class="nav nav-pills mb-4">
+            {% for class_id in object_detection_insights.class_ids_most_common %}
+            {% set class = object_detection_analysis.classes[class_id] %}
+            <li class="nav-item" role="presentation">
+              <a class="btn btn-outline-primary btn-sm m-1" data-bs-toggle="tab" data-bs-target="#c{{ class.class_id }}"
+                href="#c{{ class.class_id }}">
+                {{ class.class_name }}&nbsp;&nbsp;<span class="badge bg-light rounded-pill">{{ class.num_objects
+                  }}</span>
+              </a>
+            </li>
+            {% endfor %}
+
+          </ul>
+
+          <!-- Tab panes -->
+          <div class="tab-content" id="myTabContent">
+
+            {% for class_id in object_detection_insights.class_ids_most_common %}
+            {% set class = object_detection_analysis.classes[class_id] %}
+            <div class="tab-pane fade" id="c{{ class_id }}" role="tabpanel">
+              <h4>{{ class.num_objects }} Objects of Class "{{ class.class_name }}"</h4>
+
+              {% if class.num_objects > 0 %}
+
+              <div class="col-lg-6">
+                <table class="table table-hover mt-4">
+                  <tbody>
+                    <tr>
+                      <th scope="row">Avg size</th>
+                      <td>{{ "{0:.1f}".format(class.avg_size[0]) }} × {{ "{0:.1f}".format(class.avg_size[1]) }}</td>
+                    </tr>
+                    <tr>
+                      <th scope="row">Avg area</th>
+                      <td>{{ "{0:.0f}".format(100 * class.avg_rel_area) }} %</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+
+              <h4 class="mt-4">Sample Images</h4>
+
+              <div class="row">
+                {% for filename in class.sample_filenames %}
+                <!-- Four equal columns -->
+                <div class="col-6 col-md-3 g-3">
+                  <div class="square-box">
+                    <img src="sample/{{ filename }}" class="img-fluid rounded" alt="{{ filename }}">
+                  </div>
+                </div>
+                {% endfor %}
+              </div>
+
+              <h4 class="mt-4">Statistics</h4>
+
+              {% with plots=object_detection_insights.class_plots[class_id] %}
+              {% include 'plots.html' %}
+              {% endwith %}
+
+              {% endif %}
+
+
+            </div>
+            {% endfor %}
+
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer  -->
+    <div id="section-grid-layout" class="my-5">
+      <p class="text-center text-secondary">Generated with <a href="https://github.com/lightly-ai/lightly-insights">Lightly Insights</a>.</p>
+    </div>
+
+  </div>
+
+  <!-- Bootstrap Bundle -->
+  <!-- <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js" integrity="sha384-C6RzsynM9kWDrMNeT87bh95OGNyZPhcTNXj1NW7RuBCsyN/o0jlpcV8Qyq46cDfL" crossorigin="anonymous"></script> -->
+  <script src="./static/cdn.jsdelivr.net_npm_bootstrap@5.3.2_dist_js_bootstrap.bundle.min.js"></script>
+</body>
+
+</html>
