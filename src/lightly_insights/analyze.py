@@ -189,7 +189,10 @@ def analyze_object_detections(
             class_datum.heatmap[int(y1) : int(y2), int(x1) : int(x2)] += 1
 
             # Sample images.
-            if len(class_datum.sample_filenames) < 4:
+            if (
+                len(class_datum.sample_filenames) < 4
+                and label.image.filename not in class_datum.sample_filenames
+            ):
                 class_datum.sample_filenames.append(label.image.filename)
 
         # Update objects per image for classes.
