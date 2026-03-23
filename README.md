@@ -10,6 +10,10 @@ Get quick insights about your ML dataset.
 Lightly Insights visualises basic statistics of an image dataset. You provide a folder with images and object
 detection labels, and it generates a static HTML webpage with metrics and plots.
 
+#### News
+
+- March 23, 2026 - Check out [LightlyStudio](https://github.com/lightly-ai/lightly-studio), our latest tool to visualize, curate and manage a dataset with annotations.
+
 #### Features
 
 - Supports all object detection label formats that can be read with [Labelformat](https://github.com/lightly-ai/labelformat) package. That includes YOLO, COCO, KITTI, PascalVOC, Lightly and Labelbox.
