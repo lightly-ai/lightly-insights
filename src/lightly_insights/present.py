@@ -48,6 +48,9 @@ class ObjectDetectionInsights:
     class_ids_most_common: List[int]  # Class ids ordered from most common.
     plots: PlotPaths
     class_plots: Dict[int, PlotPaths]
+    avg_objects_per_image: float
+    avg_objects_per_class: float
+    avg_images_per_class: float
 
 
 def create_html_report(
@@ -65,6 +68,7 @@ def create_html_report(
         output_folder=output_folder,
         od_analysis=od_analysis,
         image_folder=image_analysis.image_folder,
+        num_images=image_analysis.num_images,
     )
     filename_insights = _get_filename_insights(
         output_folder=output_folder,
@@ -139,6 +143,7 @@ def _get_object_detection_insights(
     output_folder: Path,
     od_analysis: ObjectDetectionAnalysis,
     image_folder: Path,
+    num_images: int,
 ) -> ObjectDetectionInsights:
     # Plots.
     plots_folder = output_folder / "plots"
@@ -184,11 +189,20 @@ def _get_object_detection_insights(
     )
     class_ids_most_common = [id for id, _ in class_counts.most_common()]
 
+    num_classes = len(od_analysis.classes)
+    num_objects = od_analysis.total.num_objects
+    avg_objects_per_image = (num_objects / num_images) if num_images else 0.0
+    avg_objects_per_class = (num_objects / num_classes) if num_classes else 0.0
+    avg_images_per_class = (num_images / num_classes) if num_classes else 0.0
+
     return ObjectDetectionInsights(
-        num_classes=len(od_analysis.classes),
+        num_classes=num_classes,
         class_ids_most_common=class_ids_most_common,
         plots=total_plots,
         class_plots=class_plots,
+        avg_objects_per_image=avg_objects_per_image,
+        avg_objects_per_class=avg_objects_per_class,
+        avg_images_per_class=avg_images_per_class,
     )
 
 
@@ -197,8 +211,28 @@ def _get_filename_insights(
     image_filename_set: Set[str],
     label_filename_set: Set[str],
 ) -> FilenameInsights:
-    filenames_no_label = sorted(list(image_filename_set - label_filename_set))
-    filenames_no_image = sorted(list(label_filename_set - image_filename_set))
+    # Match by stem so that different extensions and subdirectory prefixes
+    # produced by Labelformat don't create spurious no-label / no-image
+    # entries.
+    def stem(name: str) -> str:
+        return Path(name).stem
+
+    image_stems = {stem(f): f for f in image_filename_set}
+    label_stems = {stem(f): f for f in label_filename_set}
+
+    if len(image_stems) < len(image_filename_set) or len(label_stems) < len(
+        label_filename_set
+    ):
+        logger.warning(
+            "Filename stems collide after normalization; reported no-label / "
+            "no-image counts may be inaccurate. Check for duplicate basenames "
+            "across subdirectories."
+        )
+
+    missing_label_stems = sorted(image_stems.keys() - label_stems.keys())
+    missing_image_stems = sorted(label_stems.keys() - image_stems.keys())
+    filenames_no_label = [image_stems[s] for s in missing_label_stems]
+    filenames_no_image = [label_stems[s] for s in missing_image_stems]
 
     if len(filenames_no_label) > 0:
         images_no_label_txt = output_folder / "images_no_label.txt"

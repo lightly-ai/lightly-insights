@@ -81,7 +81,7 @@
           <div class="card text-white bg-primary">
             <!-- <div class="card-header">Header</div> -->
             <div class="card-body">
-              <h3 class="card-titl mb-3">{{ image_analysis.num_images }} Images</h4>
+              <h3 class="card-title mb-3">{{ image_analysis.num_images }} Images</h3>
 
                 <table class="table table-hover">
                   <tbody>
@@ -104,8 +104,7 @@
                     </tr>
                     <tr class="table-primary">
                       <th scope="row">Avg objects per image</th>
-                      <td>{{ "{0:.1f}".format(object_detection_analysis.total.num_objects / image_analysis.num_images)
-                        }}</td>
+                      <td>{{ "{0:.1f}".format(object_detection_insights.avg_objects_per_image) }}</td>
                     </tr>
                   </tbody>
                 </table>
@@ -121,7 +120,7 @@
           <div class="card text-white bg-secondary">
             <!-- <div class="card-header">Header</div> -->
             <div class="card-body">
-              <h3 class="card-title mb-3">{{ object_detection_analysis.total.num_objects }} Objects</h4>
+              <h3 class="card-title mb-3">{{ object_detection_analysis.total.num_objects }} Objects</h3>
 
                 <table class="table table-hover">
                   <tbody>
@@ -131,12 +130,11 @@
                     </tr>
                     <tr class="table-secondary">
                       <th scope="row">Avg objects per class</th>
-                      <td>{{ "{0:.1f}".format(object_detection_analysis.total.num_objects /
-                        object_detection_insights.num_classes) }}</td>
+                      <td>{{ "{0:.1f}".format(object_detection_insights.avg_objects_per_class) }}</td>
                     </tr>
                     <tr class="table-secondary">
                       <th scope="row">Avg images per class</th>
-                      <td>{{ "{0:.1f}".format(image_analysis.num_images / object_detection_insights.num_classes) }}</td>
+                      <td>{{ "{0:.1f}".format(object_detection_insights.avg_images_per_class) }}</td>
                     </tr>
                     <tr class="table-secondary">
                       <th scope="row">Avg size</th>
@@ -261,14 +259,16 @@
             <tbody>
               {% for class_id in object_detection_insights.class_ids_most_common %}
               {% set class = object_detection_analysis.classes[class_id] %}
+              {% set total_objects = object_detection_analysis.total.num_objects %}
+              {% set pct = (class.num_objects / total_objects * 100) if total_objects else 0 %}
               <tr>
                 <td class="col-3">{{ class.class_name }}</td>
                 <td class="col-1">{{ class.num_objects }}</td>
                 <td class="col-8">
                   <div class="progress mt-1">
                     <div class="progress-bar" role="progressbar"
-                      style="width: {{ class.num_objects / object_detection_analysis.total.num_objects * 100 }}%;"
-                      aria-valuenow="25" aria-valuemin="0" aria-valuemax="100"></div>
+                      style="width: {{ pct }}%;"
+                      aria-valuenow="{{ pct | round(0, 'floor') | int }}" aria-valuemin="0" aria-valuemax="100"></div>
                   </div>
                 </td>
               </tr>
@@ -294,7 +294,8 @@
             {% for class_id in object_detection_insights.class_ids_most_common %}
             {% set class = object_detection_analysis.classes[class_id] %}
             <li class="nav-item" role="presentation">
-              <a class="btn btn-outline-primary btn-sm m-1" data-bs-toggle="tab" data-bs-target="#c{{ class.class_id }}"
+              <a class="btn btn-outline-primary btn-sm m-1{% if loop.first %} active{% endif %}"
+                data-bs-toggle="tab" data-bs-target="#c{{ class.class_id }}"
                 href="#c{{ class.class_id }}">
                 {{ class.class_name }}&nbsp;&nbsp;<span class="badge bg-light rounded-pill">{{ class.num_objects
                   }}</span>
@@ -309,7 +310,7 @@
 
             {% for class_id in object_detection_insights.class_ids_most_common %}
             {% set class = object_detection_analysis.classes[class_id] %}
-            <div class="tab-pane fade" id="c{{ class_id }}" role="tabpanel">
+            <div class="tab-pane fade{% if loop.first %} show active{% endif %}" id="c{{ class_id }}" role="tabpanel">
               <h4>{{ class.num_objects }} Objects of Class "{{ class.class_name }}"</h4>
 
               {% if class.num_objects > 0 %}

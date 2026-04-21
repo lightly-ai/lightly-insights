@@ -1,5 +1,6 @@
 import logging
 from dataclasses import dataclass
+from math import ceil, floor
 from pathlib import Path
 from typing import Counter, Dict, List, Set, Tuple
 
@@ -117,9 +118,11 @@ def analyze_images(image_folder: Path) -> ImageAnalysis:
             image_widths.append(image.size[0])
             image_heights.append(image.size[1])
 
+    # Note: width and height medians are computed independently, so the pair
+    # is not guaranteed to correspond to any single image in the dataset.
     median_size = (
-        sorted(image_widths)[num_images // 2] if num_images > 0 else 0,
-        sorted(image_heights)[num_images // 2] if num_images > 0 else 0,
+        int(np.median(image_widths)) if num_images > 0 else 0,
+        int(np.median(image_heights)) if num_images > 0 else 0,
     )
 
     return ImageAnalysis(
@@ -180,13 +183,30 @@ def analyze_object_detections(
             class_datum.object_sizes_abs.append(obj_size_abs)
             class_datum.object_sizes_rel.append(obj_size_rel)
 
-            # Heatmap.
-            x1 = obj.box.xmin / label.image.width * HEATMAP_SIZE
-            x2 = obj.box.xmax / label.image.width * HEATMAP_SIZE
-            y1 = obj.box.ymin / label.image.height * HEATMAP_SIZE
-            y2 = obj.box.ymax / label.image.height * HEATMAP_SIZE
-            total_data.heatmap[int(y1) : int(y2), int(x1) : int(x2)] += 1
-            class_datum.heatmap[int(y1) : int(y2), int(x1) : int(x2)] += 1
+            # Heatmap. Use floor/ceil + clamp so sub-cell boxes still
+            # contribute to at least one cell.
+            x1 = max(
+                0,
+                floor(obj.box.xmin / label.image.width * HEATMAP_SIZE),
+            )
+            x2 = min(
+                HEATMAP_SIZE,
+                ceil(obj.box.xmax / label.image.width * HEATMAP_SIZE),
+            )
+            y1 = max(
+                0,
+                floor(obj.box.ymin / label.image.height * HEATMAP_SIZE),
+            )
+            y2 = min(
+                HEATMAP_SIZE,
+                ceil(obj.box.ymax / label.image.height * HEATMAP_SIZE),
+            )
+            if x2 <= x1:
+                x2 = min(HEATMAP_SIZE, x1 + 1)
+            if y2 <= y1:
+                y2 = min(HEATMAP_SIZE, y1 + 1)
+            total_data.heatmap[y1:y2, x1:x2] += 1
+            class_datum.heatmap[y1:y2, x1:x2] += 1
 
             # Sample images.
             if (
@@ -199,7 +219,7 @@ def analyze_object_detections(
         for category in label_input.get_categories():
             class_data[category.id].objects_per_image[
                 num_objects_per_category[category.id]
-            ] += num_objects_per_category[category.id]
+            ] += 1
 
     return ObjectDetectionAnalysis(
         num_images=num_images,

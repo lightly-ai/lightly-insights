@@ -63,15 +63,15 @@ def create_object_plots(
         title="Object Sizes in Percent  (buckets by 5%)",
     )
 
-    # Side length histogram. Bucket by multiples of 20px.
+    # Side length histogram. Bucket by multiples of 50px.
     side_length_avg_histogram = Counter(
-        50.0 * round((w + h / 2) / 50) for w, h in class_analysis.object_sizes_abs
+        50.0 * round(((w + h) / 2) / 50) for w, h in class_analysis.object_sizes_abs
     )
     _histogram(
         output_file=side_length_avg_path,
         hist=side_length_avg_histogram,
         title="Object Side Length Average (buckets by 50px)",
-        xlabel="Width/2 + Height/2 (px)",
+        xlabel="(Width + Height) / 2 (px)",
         ylabel="Number of Objects",
         bar_width=50,
         x_average_line=True,
