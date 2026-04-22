@@ -10,7 +10,8 @@ from typing import Any, Counter, Dict, List, Optional, Set, Tuple
 import tqdm
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
-from lightly_insights import plots
+from lightly_insights import advice as advice_mod
+from lightly_insights import drilldown, exports, plots
 from lightly_insights.analyze import ImageAnalysis, ObjectDetectionAnalysis
 from lightly_insights.plots import PlotPaths
 
@@ -105,6 +106,9 @@ class ObjectDetectionInsights:
     avg_images_per_class: float
     imbalance: ImbalanceStats
     cooccurrence_plot: str = ""
+    aspect_overlay_plot: str = ""
+    heatmap_overlay_plot: str = ""
+    count_vs_size_plot: str = ""
 
 
 def create_html_report(
@@ -124,6 +128,7 @@ def create_html_report(
         od_analysis=od_analysis,
         image_folder=image_analysis.image_folder,
         num_images=image_analysis.num_images,
+        filename_to_size=image_analysis.filename_to_size,
     )
     filename_insights = _get_filename_insights(
         output_folder=output_folder,
@@ -133,6 +138,14 @@ def create_html_report(
     health_score = compute_health_score(
         image_analysis=image_analysis, od_analysis=od_analysis
     )
+    training_advice = advice_mod.compute_advice(
+        image_analysis=image_analysis, od_analysis=od_analysis
+    )
+    drilldown_galleries = drilldown.build_drilldowns(
+        output_folder=output_folder,
+        image_folder=image_analysis.image_folder,
+        od_analysis=od_analysis,
+    )
 
     report_data = dict(
         image_analysis=image_analysis,
@@ -141,6 +154,8 @@ def create_html_report(
         object_detection_insights=object_detection_insights,
         filename_insights=filename_insights,
         health_score=health_score,
+        training_advice=training_advice,
+        drilldown_galleries=drilldown_galleries,
         date_generated=datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z"),
     )
 
@@ -163,6 +178,20 @@ def create_html_report(
     if output_static_folder.exists():
         shutil.rmtree(output_static_folder, ignore_errors=True)
     shutil.copytree(src=static_folder, dst=output_static_folder)
+
+    # Machine-readable exports + executive summary.
+    exports.export_worklists(
+        output_folder=output_folder,
+        image_analysis=image_analysis,
+        od_analysis=od_analysis,
+        health_score=health_score,
+    )
+    exports.export_markdown_summary(
+        output_folder=output_folder,
+        image_analysis=image_analysis,
+        od_analysis=od_analysis,
+        health_score=health_score,
+    )
 
     logger.info(f"Successfully created HTML report: {html_output_path.resolve()}")
 
@@ -279,6 +308,7 @@ def _get_object_detection_insights(
     od_analysis: ObjectDetectionAnalysis,
     image_folder: Path,
     num_images: int,
+    filename_to_size: Dict[str, Tuple[int, int]],
 ) -> ObjectDetectionInsights:
     # Plots.
     plots_folder = output_folder / "plots"
@@ -353,6 +383,58 @@ def _get_object_detection_insights(
         )
         cooccurrence_plot_rel = "cooccurrence.png"
 
+    # Per-class aspect-ratio overlay (one figure for everything).
+    aspect_overlay_rel = ""
+    if any(c.aspect_ratios for c in od_analysis.classes.values()):
+        overlay_path = output_folder / "aspect_overlay.png"
+        plots.per_class_aspect_overlay(
+            output_file=overlay_path,
+            classes=[
+                (c.class_name, c.aspect_ratios)
+                for c in od_analysis.classes.values()
+            ],
+        )
+        aspect_overlay_rel = "aspect_overlay.png"
+
+    # Heatmap blended onto a sample image (picks the most-object image).
+    heatmap_overlay_rel = ""
+    if od_analysis.total.heatmap is not None and od_analysis.total.heatmap.sum() > 0:
+        # Pick the image with most objects as the background.
+        bg_path: Optional[Path] = None
+        if od_analysis.objects_per_filename:
+            best = max(od_analysis.objects_per_filename.items(), key=lambda kv: kv[1])
+            candidate = image_folder / best[0]
+            if candidate.exists():
+                bg_path = candidate
+        overlay_path = output_folder / "heatmap_overlay.png"
+        plots.heatmap_overlay(
+            output_file=overlay_path,
+            heatmap=od_analysis.total.heatmap,
+            background_path=bg_path,
+        )
+        heatmap_overlay_rel = "heatmap_overlay.png"
+
+    # Object-count vs. image-size correlation. Only meaningful when we know
+    # both image sizes (from analyze_images) and object counts (from OD scan).
+    count_vs_size_rel = ""
+    if od_analysis.objects_per_filename and filename_to_size:
+        image_areas: List[float] = []
+        object_counts: List[int] = []
+        for name, count in od_analysis.objects_per_filename.items():
+            size = filename_to_size.get(name)
+            if size is None:
+                continue
+            image_areas.append(float(size[0] * size[1]))
+            object_counts.append(count)
+        if image_areas:
+            cv_path = output_folder / "count_vs_size.png"
+            plots.object_count_vs_image_size(
+                output_file=cv_path,
+                image_areas=image_areas,
+                object_counts=object_counts,
+            )
+            count_vs_size_rel = "count_vs_size.png"
+
     return ObjectDetectionInsights(
         num_classes=num_classes,
         class_ids_most_common=class_ids_most_common,
@@ -363,6 +445,9 @@ def _get_object_detection_insights(
         avg_images_per_class=avg_images_per_class,
         imbalance=imbalance,
         cooccurrence_plot=cooccurrence_plot_rel,
+        aspect_overlay_plot=aspect_overlay_rel,
+        heatmap_overlay_plot=heatmap_overlay_rel,
+        count_vs_size_plot=count_vs_size_rel,
     )
 
 

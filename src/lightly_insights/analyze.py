@@ -56,6 +56,11 @@ class QualityFlags:
     uniform_files: List[str] = field(default_factory=list)  # all-black/all-white
     blurry_files: List[str] = field(default_factory=list)
     extreme_aspect_files: List[str] = field(default_factory=list)
+    # Image format diagnostics. Counters over {L, RGB, RGBA, CMYK, P, ...}.
+    mode_counts: Counter[str] = field(default_factory=Counter)  # type: ignore[type-arg]
+    format_counts: Counter[str] = field(default_factory=Counter)  # type: ignore[type-arg]
+    # Filenames mixing uncommon modes; useful for warning on mixed-channel data.
+    non_rgb_files: List[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -202,28 +207,28 @@ def _laplacian_variance(gray: NDArray[np.float_]) -> float:
 
 def _inspect_quality(
     image_path: Path, rel_name: str
-) -> Tuple[str, bool, bool, bool]:
+) -> Tuple[str, bool, bool, bool, str, str]:
     """Return quality signals for a single image.
 
-    Returns (rel_name, is_uniform, is_blurry, is_extreme_aspect).
+    Returns (rel_name, is_uniform, is_blurry, is_extreme_aspect, mode, format).
     """
     try:
         with Image.open(image_path) as img:
-            # Downsample first — blur metric + std are stable at small sizes
-            # and this keeps big images fast.
             w, h = img.size
+            mode = img.mode
+            fmt = img.format or ""
             thumb = img.convert("L")
             thumb.thumbnail((256, 256))
             arr = np.asarray(thumb, dtype=np.float64)
     except (UnidentifiedImageError, OSError):
-        return rel_name, False, False, False
+        return rel_name, False, False, False, "", ""
     is_uniform = bool(arr.std() < UNIFORM_LUMINANCE_STD) if arr.size else False
     is_blurry = bool(_laplacian_variance(arr) < BLUR_LAPLACIAN_VAR)
     ratio = (w / h) if h > 0 else 0
     is_extreme_aspect = ratio > EXTREME_ASPECT_RATIO or (
         ratio > 0 and ratio < 1 / EXTREME_ASPECT_RATIO
     )
-    return rel_name, is_uniform, is_blurry, is_extreme_aspect
+    return rel_name, is_uniform, is_blurry, is_extreme_aspect, mode, fmt
 
 
 def _compute_quality_flags(
@@ -249,12 +254,15 @@ def _compute_quality_flags(
     uniform: List[str] = []
     blurry: List[str] = []
     extreme: List[str] = []
+    mode_counts: Counter[str] = Counter()
+    format_counts: Counter[str] = Counter()
+    non_rgb: List[str] = []
 
-    def _task(pn: Tuple[Path, str]) -> Tuple[str, bool, bool, bool]:
+    def _task(pn: Tuple[Path, str]) -> Tuple[str, bool, bool, bool, str, str]:
         return _inspect_quality(pn[0], pn[1])
 
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        for rel_name, is_uniform, is_blurry, is_ext in tqdm.tqdm(
+        for rel_name, is_uniform, is_blurry, is_ext, mode, fmt in tqdm.tqdm(
             pool.map(_task, sample),
             total=len(sample),
             desc="Scanning quality",
@@ -266,12 +274,21 @@ def _compute_quality_flags(
                 blurry.append(rel_name)
             if is_ext:
                 extreme.append(rel_name)
+            if mode:
+                mode_counts[mode] += 1
+                if mode not in ("RGB",):
+                    non_rgb.append(rel_name)
+            if fmt:
+                format_counts[fmt] += 1
 
     return QualityFlags(
         sample_size=len(sample),
         uniform_files=sorted(uniform),
         blurry_files=sorted(blurry),
         extreme_aspect_files=sorted(extreme),
+        mode_counts=mode_counts,
+        format_counts=format_counts,
+        non_rgb_files=sorted(non_rgb),
     )
 
 

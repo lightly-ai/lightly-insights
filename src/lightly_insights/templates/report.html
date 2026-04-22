@@ -57,6 +57,42 @@
     <div id="section-grid-layout" class="my-5">
       <h1 class="mb-4">Lightly Insights</h1>
 
+      {% if training_advice %}
+      <div class="card border-info mb-4">
+        <h5 class="card-header bg-info text-white">Training-readiness advice</h5>
+        <div class="card-body p-0">
+          <table class="table table-sm mb-0">
+            <thead>
+              <tr>
+                <th scope="col" style="width: 8em">Category</th>
+                <th scope="col" style="width: 6em">Severity</th>
+                <th scope="col">Finding</th>
+                <th scope="col">Suggestion</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for a in training_advice %}
+              <tr>
+                <td>{{ a.category }}</td>
+                <td>
+                  {% if a.severity == "critical" %}
+                  <span class="badge bg-danger">critical</span>
+                  {% elif a.severity == "warning" %}
+                  <span class="badge bg-warning text-dark">warning</span>
+                  {% else %}
+                  <span class="badge bg-secondary">info</span>
+                  {% endif %}
+                </td>
+                <td class="small">{{ a.finding }}</td>
+                <td class="small">{{ a.suggestion }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {% endif %}
+
       {% if health_score.subscores %}
       <div class="card border-primary mb-4">
         <div class="card-body">
@@ -292,6 +328,7 @@
           and (image_analysis.quality_flags.uniform_files
                or image_analysis.quality_flags.blurry_files
                or image_analysis.quality_flags.extreme_aspect_files
+               or image_analysis.quality_flags.mode_counts|length > 1
                or image_analysis.corrupt_files
                or image_analysis.near_duplicate_groups) %}
     <!-- Image Quality Red Flags -->
@@ -354,6 +391,19 @@
                 {% if image_analysis.quality_flags.extreme_aspect_files|length > 5 %}
                 <li class="text-muted">… and {{ image_analysis.quality_flags.extreme_aspect_files|length - 5 }} more</li>
                 {% endif %}
+              </ul>
+            </div>
+            {% endif %}
+            {% if image_analysis.quality_flags.mode_counts|length > 1 %}
+            <div class="col-md-6 mb-3">
+              <strong>Mixed image modes</strong>
+              <p class="small mb-1 text-muted">
+                Detectors often choke on mixed-channel inputs. Convert to a single mode before training.
+              </p>
+              <ul class="small mb-0">
+                {% for mode, count in image_analysis.quality_flags.mode_counts.most_common() %}
+                <li><code>{{ mode }}</code>: {{ count }} image(s)</li>
+                {% endfor %}
               </ul>
             </div>
             {% endif %}
@@ -489,6 +539,27 @@
           </div>
           {% endif %}
 
+          {% if drilldown_galleries %}
+          <div class="mt-3">
+            <h5>Problematic annotations — drill-down</h5>
+            {% for gallery in drilldown_galleries %}
+            <div class="mt-3">
+              <strong>{{ gallery.title }}</strong>
+              <p class="small text-muted mb-2">{{ gallery.description }}</p>
+              <div class="row">
+                {% for thumb in gallery.thumbs %}
+                <div class="col-md-4 col-sm-6 mb-3">
+                  <img src="{{ thumb.src }}" class="img-fluid rounded border" alt="{{ thumb.filename }}">
+                  <div class="small"><code>{{ thumb.filename }}</code></div>
+                  <div class="small text-muted">{{ thumb.caption }}</div>
+                </div>
+                {% endfor %}
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+          {% endif %}
+
           {% if object_detection_analysis.recommended_anchors|length > 0 %}
           <div class="mt-3">
             <h5>Recommended anchor sizes</h5>
@@ -531,6 +602,27 @@
             </div>
           </div>
           {% endif %}
+
+          <div class="row mt-3">
+            {% if object_detection_insights.aspect_overlay_plot %}
+            <div class="col-lg-6">
+              <img src="{{ object_detection_insights.aspect_overlay_plot }}"
+                   class="img-fluid" alt="Per-class aspect overlay">
+            </div>
+            {% endif %}
+            {% if object_detection_insights.heatmap_overlay_plot %}
+            <div class="col-lg-6">
+              <img src="{{ object_detection_insights.heatmap_overlay_plot }}"
+                   class="img-fluid" alt="Heatmap overlay on sample">
+            </div>
+            {% endif %}
+            {% if object_detection_insights.count_vs_size_plot %}
+            <div class="col-lg-6">
+              <img src="{{ object_detection_insights.count_vs_size_plot }}"
+                   class="img-fluid" alt="Objects per image vs. image size">
+            </div>
+            {% endif %}
+          </div>
 
           <table class="table table-sm table-hover">
             <thead>

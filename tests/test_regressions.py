@@ -658,3 +658,118 @@ def test_health_score_letter_grades_boundaries() -> None:
     assert _letter_grade(89.9) == "B"
     assert _letter_grade(70) == "C"
     assert _letter_grade(59.9) == "F"
+
+
+# ==== Phase 6: actionability ====
+
+
+def test_exports_writes_csv_and_summary(tmp_path: Path) -> None:
+    """End-to-end: create a report with some issues; verify exports exist."""
+    from lightly_insights import exports, present
+
+    img = Image(id=0, filename="a.jpg", width=500, height=500)
+    cat_a = Category(id=0, name="car")
+    cat_b = Category(id=1, name="truck")
+    conflict = ImageObjectDetection(
+        image=img,
+        objects=[
+            SingleObjectDetection(
+                category=cat_a, box=BoundingBox(xmin=10, ymin=10, xmax=100, ymax=100)
+            ),
+            SingleObjectDetection(
+                category=cat_b, box=BoundingBox(xmin=12, ymin=12, xmax=102, ymax=102)
+            ),
+        ],
+    )
+    od = analyze.analyze_object_detections(
+        _FakeODInput(categories=[cat_a, cat_b], labels=[conflict])
+    )
+    folder = _make_image_folder(tmp_path, [(500, 500)])
+    image_analysis = analyze.analyze_images(folder, check_quality=False)
+    health = present.compute_health_score(
+        image_analysis=image_analysis, od_analysis=od
+    )
+
+    written = exports.export_worklists(
+        output_folder=tmp_path,
+        image_analysis=image_analysis,
+        od_analysis=od,
+        health_score=health,
+    )
+    # fix_first.csv + class_conflicts.csv + insights.json should all be there.
+    names = {p.name for p in written}
+    assert "fix_first.csv" in names
+    assert "class_conflicts.csv" in names
+    assert "insights.json" in names
+
+    summary = exports.export_markdown_summary(
+        output_folder=tmp_path,
+        image_analysis=image_analysis,
+        od_analysis=od,
+        health_score=health,
+    )
+    assert summary.exists()
+    body = summary.read_text()
+    assert "Dataset Insights Summary" in body
+
+
+def test_advice_fires_on_tiny_objects() -> None:
+    from lightly_insights import advice as advice_mod
+
+    cat = Category(id=0, name="car")
+    img = Image(id=0, filename="a.jpg", width=1000, height=1000)
+    # 10 tiny boxes.
+    objs = [
+        SingleObjectDetection(
+            category=cat, box=BoundingBox(xmin=0, ymin=0, xmax=5, ymax=5)
+        )
+        for _ in range(10)
+    ]
+    od = analyze.analyze_object_detections(
+        _FakeODInput(
+            categories=[cat],
+            labels=[ImageObjectDetection(image=img, objects=objs)],
+        )
+    )
+    # Minimal ImageAnalysis for advice call signature.
+    class _Stub:
+        quality_flags = None
+        num_images = 1
+        corrupt_files: list = []
+        image_folder = Path(".")
+        filename_set: set = set()
+        image_sizes = Counter()  # type: ignore[var-annotated]
+        median_size = (0, 0)
+        filename_to_size: dict = {}
+        near_duplicate_groups: list = []
+
+    hits = advice_mod.compute_advice(image_analysis=_Stub(), od_analysis=od)  # type: ignore[arg-type]
+    assert any("<0.5" in a.finding or "stride" in a.finding.lower() for a in hits)
+
+
+def test_comparison_produces_markdown(tmp_path: Path) -> None:
+    from lightly_insights import compare
+
+    a_folder = tmp_path / "a"; a_folder.mkdir()
+    b_folder = tmp_path / "b"; b_folder.mkdir()
+    (a_folder / "insights.json").write_text('{"overall_score": 60, "grade": "D", "subscores": [], "issues": ["x"], "num_images": 10, "num_objects": 5, "num_classes": 2, "corrupt_count": 0, "class_conflicts_count": 1, "duplicate_annotations_count": 0, "near_duplicate_groups_count": 0, "recommended_anchors": []}')
+    (b_folder / "insights.json").write_text('{"overall_score": 82, "grade": "B", "subscores": [], "issues": [], "num_images": 10, "num_objects": 5, "num_classes": 2, "corrupt_count": 0, "class_conflicts_count": 0, "duplicate_annotations_count": 0, "near_duplicate_groups_count": 0, "recommended_anchors": []}')
+    out = tmp_path / "diff.md"
+    compare.write_comparison(a_folder=a_folder, b_folder=b_folder, output_file=out)
+    body = out.read_text()
+    assert "Dataset comparison" in body
+    assert "60" in body and "82" in body
+    assert "+22" in body  # overall-score delta
+
+
+def test_cli_compare_subcommand(tmp_path: Path) -> None:
+    from lightly_insights import __main__ as cli
+
+    a = tmp_path / "a"; a.mkdir()
+    b = tmp_path / "b"; b.mkdir()
+    (a / "insights.json").write_text('{"overall_score": 50, "grade": "F", "subscores": [], "issues": [], "num_images": 1, "num_objects": 1, "num_classes": 1, "corrupt_count": 0, "class_conflicts_count": 0, "duplicate_annotations_count": 0, "near_duplicate_groups_count": 0, "recommended_anchors": []}')
+    (b / "insights.json").write_text('{"overall_score": 80, "grade": "B", "subscores": [], "issues": [], "num_images": 1, "num_objects": 1, "num_classes": 1, "corrupt_count": 0, "class_conflicts_count": 0, "duplicate_annotations_count": 0, "near_duplicate_groups_count": 0, "recommended_anchors": []}')
+    out = tmp_path / "out.md"
+    rc = cli.main(["compare", str(a), str(b), "--out", str(out)])
+    assert rc == 0
+    assert out.exists()

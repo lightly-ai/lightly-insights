@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Counter, List, Tuple, Union
+from typing import Counter, List, Optional, Tuple, Union
 
 import numpy as np
 from matplotlib import pyplot as plt
@@ -298,6 +298,99 @@ def _heatmap(
     ax.set_title("Object Location Heatmap")
 
     # Save the plot.
+    plt.savefig(output_file)
+    plt.close(fig)
+
+
+def per_class_aspect_overlay(
+    output_file: Path,
+    classes: List[Tuple[str, List[float]]],
+) -> None:
+    """One overlay histogram of aspect ratios for all classes on the same axes.
+
+    `classes` is a list of (class_name, aspect_ratios). Empty classes are skipped.
+    """
+    fig = plt.figure(figsize=(8, 5))
+    ax = fig.add_subplot(111)
+    cmap = plt.get_cmap("tab10")
+    bins = np.linspace(-1.0, 1.0, 30)  # log10 of [0.1, 10]
+    plotted = 0
+    for i, (name, ratios) in enumerate(classes):
+        if not ratios:
+            continue
+        clipped = np.clip(ratios, 0.1, 10.0)
+        ax.hist(
+            np.log10(clipped),
+            bins=bins,
+            alpha=0.4,
+            label=name,
+            color=cmap(i % 10),
+        )
+        plotted += 1
+    if plotted > 0:
+        ticks = [0.1, 0.25, 0.5, 1.0, 2.0, 4.0, 10.0]
+        ax.set_xticks(np.log10(ticks))
+        ax.set_xticklabels([f"{t:g}" for t in ticks])
+        ax.legend(loc="best", fontsize=8)
+    ax.set_xlabel("Width / Height")
+    ax.set_ylabel("Number of Objects")
+    ax.set_title("Aspect Ratio by Class (overlaid, log scale)")
+    fig.tight_layout()
+    plt.savefig(output_file)
+    plt.close(fig)
+
+
+def heatmap_overlay(
+    output_file: Path,
+    heatmap: NDArray[np.float_],
+    background_path: Optional[Path],
+) -> None:
+    """Blend the object-location heatmap onto a representative sample image.
+
+    Falls back to the pure heatmap if no background is provided.
+    """
+    from PIL import Image as PILImage  # local import keeps pyplot-only callers cheap
+
+    fig = plt.figure(figsize=(6, 6))
+    ax = fig.add_subplot(111)
+    if background_path is not None and background_path.exists():
+        try:
+            with PILImage.open(background_path) as img:
+                bg = img.convert("RGB")
+                bg.thumbnail((heatmap.shape[1] * 8, heatmap.shape[0] * 8))
+                ax.imshow(bg, extent=[0, 100, 100, 0])
+        except Exception:  # pragma: no cover -- defensive
+            pass
+    ax.imshow(
+        heatmap,
+        cmap="hot",
+        alpha=0.45,
+        extent=[0, 100, 100, 0],
+        interpolation="nearest",
+    )
+    ax.set_xlabel("X (%)")
+    ax.set_ylabel("Y (%)")
+    ax.set_title("Object Location Heatmap (overlaid on sample)")
+    fig.tight_layout()
+    plt.savefig(output_file)
+    plt.close(fig)
+
+
+def object_count_vs_image_size(
+    output_file: Path,
+    image_areas: List[float],
+    object_counts: List[int],
+) -> None:
+    """Scatter of image area vs. number of objects per image."""
+    fig = plt.figure(figsize=(6, 5))
+    ax = fig.add_subplot(111)
+    if image_areas and object_counts:
+        ax.scatter(image_areas, object_counts, alpha=0.5, s=12)
+    ax.set_xlabel("Image area (pixels)")
+    ax.set_ylabel("Objects in image")
+    ax.set_title("Objects per image vs. image size")
+    ax.set_xscale("log")
+    fig.tight_layout()
     plt.savefig(output_file)
     plt.close(fig)
 
