@@ -15,6 +15,7 @@ from lightly_insights.checks import (  # noqa: F401
     duplicate_annotation,
     geometric_validity,
     mask_fragmentation,
+    missing_label_proposal,
     multi_source_disagreement,
     polygon_axis_aligned,
     polygon_mask_consistency,
