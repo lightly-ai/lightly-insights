@@ -41,7 +41,9 @@ def run_all(
         being quietly annotated.
     """
     findings: List[Finding] = []
-    for check_id, cls in _CHECK_REGISTRY.items():
+    # Iterate in a deterministic order so two runs on the same dataset yield
+    # bit-for-bit identical findings.json. Relies on check_id being unique.
+    for check_id, cls in sorted(_CHECK_REGISTRY.items()):
         if only is not None and check_id not in only:
             continue
         if exclude is not None and check_id in exclude:

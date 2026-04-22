@@ -24,7 +24,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Iterable, List, Sequence
 
-from jinja2 import Environment, FileSystemLoader, StrictUndefined
+from jinja2 import Environment, FileSystemLoader, StrictUndefined, select_autoescape
 
 from lightly_insights.core.attribution import (
     compute_attribution,
@@ -85,14 +85,18 @@ def create_findings_report(
     # CSV + JSON side-car exports.
     review_queue_csv_path = output_folder / "review_queue.csv"
     export_review_queue_csv(review_queue, review_queue_csv_path)
+    # ``default=str`` catches non-JSON-serializable evidence values (e.g. a
+    # numpy scalar a user-defined check forgot to .tolist()) so one misbehaving
+    # check can't abort the whole report with a half-written CSV on disk.
     (output_folder / "findings.json").write_text(
-        json.dumps([f.to_dict() for f in findings], indent=2) + "\n"
+        json.dumps([f.to_dict() for f in findings], indent=2, default=str) + "\n"
     )
 
-    # Static assets (Bootstrap etc.) — same folder legacy uses.
+    # Static assets (Bootstrap etc.) — same folder legacy uses. Always refresh
+    # so upgrades pick up new CSS/JS from the package without the user having
+    # to nuke the output folder between runs.
     output_static = output_folder / "static"
-    if not output_static.exists():
-        shutil.copytree(src=_static_folder, dst=output_static)
+    shutil.copytree(src=_static_folder, dst=output_static, dirs_exist_ok=True)
 
     # Overview plots. Each returns "" if the underlying data isn't there.
     class_plot = render_class_composition(output_folder, dataset)
@@ -118,6 +122,10 @@ def create_findings_report(
     env = Environment(
         loader=FileSystemLoader(searchpath=_template_folder),
         undefined=StrictUndefined,
+        # Escape user-controlled strings (filenames, class names, autolabeler
+        # outputs) by default. Prevents a malicious class_name or filename
+        # from injecting <script> tags into the rendered report.
+        autoescape=select_autoescape(["html"]),
     )
     template = env.get_template("findings_report.html")
     html = template.render(

@@ -42,7 +42,7 @@ untouched and still ships.
   - `[ml]` extra pulls in `ultralytics`; `[near-duplicates]` extra pulls
     in `imagehash`. Both are optional.
 
-- **Bundled checks** (23 total)
+- **Bundled checks** (21 total)
   - Pipeline integrity: `corrupt_images`, `degenerate_annotation`,
     `out_of_bounds_annotation`, `mask_image_size_mismatch`.
   - Annotation quality: `duplicate_annotation`, `same_class_overlap`,

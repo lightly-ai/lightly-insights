@@ -1,6 +1,6 @@
 # Bundled checks
 
-23 checks registered. Each one emits `Finding` objects with a severity, category, and a concrete action string.
+21 checks registered. Each one emits `Finding` objects with a severity, category, and a concrete action string.
 
 ## Pipeline integrity (CRITICAL severity)
 
@@ -63,16 +63,28 @@ Edit those directly to match your domain. The checks don't take per-run config y
 
 ## Applies-to logic
 
-Each check declares when it should run:
+Each check declares when it should run. The default `Check.applies_to`
+returns `True` unconditionally; checks that need specific data override it:
 
-- Default: applies if `dataset.kinds & check.supported_kinds` is non-empty.
-- `polygon_mask_consistency`: applies only when both polygon AND mask annotations are present.
-- `confidence_*`: applies only when at least one annotation carries a confidence.
-- `split_purity` / `split_leakage`: apply only when `dataset.split_by_filename` has ≥ 2 splits.
-- `multi_source_disagreement`: applies only when ≥ 2 distinct `source` values are present.
-- `missing_label_proposal`: applies only when any annotation has `source` starting with `"proposal:"`.
+- Checks with an explicit `supported_kinds` frozenset apply when
+  `dataset.kinds & check.supported_kinds` is non-empty.
+- Checks with an empty `supported_kinds` (image-level checks like
+  `corrupt_images`, `background_scarcity`, `starved_class`,
+  `split_purity`, `split_leakage`, `confidence_class_bias`) apply
+  regardless of annotation kinds.
+- `polygon_mask_consistency` applies only when both polygon AND mask
+  annotations are present.
+- `confidence_*` checks apply only when at least one annotation carries
+  a confidence.
+- `split_purity` / `split_leakage` apply only when
+  `dataset.split_by_filename` has ≥ 2 splits.
+- `multi_source_disagreement` applies only when ≥ 2 distinct `source`
+  values are present.
+- `missing_label_proposal` applies only when any annotation has a
+  `source` starting with `"proposal:"`.
 
-`run_all` filters automatically via `check.applies_to(dataset)`; your code doesn't have to reason about which checks are relevant.
+`run_all` filters automatically via `check.applies_to(dataset)`; your
+code doesn't have to reason about which checks are relevant.
 
 ## Severity semantics
 
@@ -86,4 +98,4 @@ Lower numeric value = more urgent.
 | `Severity.LOW` | 70 | Informational noise; batch-triage. |
 | `Severity.INFO` | 90 | Config/meta messages. |
 
-Intermediate integer values are allowed (e.g. `severity=25` for "between CRITICAL and HIGH"); the summary strip and letter-grade logic bucket them correctly.
+Intermediate integer values are allowed (e.g. `severity=25` for "between CRITICAL and HIGH"); the summary-strip bucketing in `findings_present._severity_buckets` covers the full 0-100 space with no gaps. (The letter-grade logic in `present._letter_grade` is unrelated — it grades a 0-100 quality *score*, not a severity.)

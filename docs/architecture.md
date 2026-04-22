@@ -77,11 +77,14 @@ All three geometries (`Box`, `Polygon`, `Mask`) expose the same minimum API:
 |---|---|---|---|
 | `area` | w × h | shoelace | `sum()` |
 | `tight_box` | self | AABB of points | nonzero AABB |
-| `aspect_ratio` | w / h | `tight_box.aspect_ratio` | `tight_box.aspect_ratio` |
+| `aspect_ratio` | w / h direct | via `poly.tight_box.aspect_ratio` | via `mask.tight_box.aspect_ratio` |
 | Self-intersection | — | CCW sweep | — |
 | Connected components | — | — | pure-numpy BFS |
 
-This lets cross-geometry checks operate without branching.
+The `tight_box` method is the uniform entry point for cross-geometry
+checks: everything that needs a bounding box (IoU, area, aspect ratio)
+goes through `annotation.tight_box`, so check code doesn't branch on
+`AnnotationKind`.
 
 ## Adapters
 
@@ -104,7 +107,7 @@ priority = max(1, 100 − severity) × (1 + (1 − confidence))
 
 - Higher priority → reviewed first.
 - Dataset-level findings (no affected annotation) default to `(1 + 1) = 2` on the confidence term.
-- Annotation-level with low confidence get a double-boost: lower severity threshold *and* high uncertainty.
+- Annotation-level items with low confidence get a full 2× boost on the uncertainty term — enough that a MEDIUM-severity + 0.1-confidence item (`50 × 1.9 = 95`) can outrank a CRITICAL + 0.95-confidence item (`90 × 1.05 = 94.5`). That's deliberate: "the model is unsure AND there's a known issue" is a better review target than "the model is sure and there's a known issue" (which the model is likely right about).
 
 Sort tiebreaks: `−priority, severity, filename, (annotation_id is None), annotation_id`.
 

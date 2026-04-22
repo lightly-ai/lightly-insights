@@ -16,7 +16,7 @@ detection labels, and it generates a static HTML webpage with metrics and plots.
 
 #### Features
 
-- **Check / finding framework** — 23 bundled checks across pipeline integrity, annotation quality, balance, and autolabel diagnostics (see [`docs/checks.md`](docs/checks.md)).
+- **Check / finding framework** — 21 bundled checks across pipeline integrity, annotation quality, balance, and autolabel diagnostics (see [`docs/checks.md`](docs/checks.md)).
 - **Works for boxes, polygons, and masks** — every geometry exposes the same API so checks run across types.
 - **Autolabel aware** — `confidence` and `source` on each annotation enable over-confident-tiny detection, per-class bias scoring, multi-source disagreement, pretrained-model missing-label proposals.
 - **Findings-first HTML report** with a priority review queue, per-finding drill-down thumbnails, source attribution, and cumulative review-burden curve.
