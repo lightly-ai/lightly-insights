@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Counter, Tuple, Union
+from typing import Counter, List, Tuple, Union
 
 import numpy as np
 from matplotlib import pyplot as plt
@@ -18,6 +18,7 @@ class PlotPaths:
     rel_area: str
     objects_per_image: str
     heatmap: str
+    aspect_ratio: str
 
 
 def create_object_plots(
@@ -36,6 +37,7 @@ def create_object_plots(
     rel_area_path = plot_folder / "rel_area.png"
     objects_per_image_path = plot_folder / "objects_per_image.png"
     heatmap_path = plot_folder / "heatmap.png"
+    aspect_ratio_path = plot_folder / "aspect_ratio.png"
 
     # Bucket by multiples of 20px.
     size_histogram_abs = Counter(
@@ -108,6 +110,12 @@ def create_object_plots(
         heatmap=class_analysis.heatmap,
     )
 
+    # Aspect-ratio distribution (log-scale so 2:1 and 1:2 are symmetric).
+    _aspect_ratio_plot(
+        output_file=aspect_ratio_path,
+        aspect_ratios=class_analysis.aspect_ratios,
+    )
+
     return PlotPaths(
         object_sizes_abs=str(object_sizes_abs_path.relative_to(output_folder)),
         object_sizes_rel=str(object_sizes_rel_path.relative_to(output_folder)),
@@ -115,6 +123,7 @@ def create_object_plots(
         rel_area=str(rel_area_path.relative_to(output_folder)),
         objects_per_image=str(objects_per_image_path.relative_to(output_folder)),
         heatmap=str(heatmap_path.relative_to(output_folder)),
+        aspect_ratio=str(aspect_ratio_path.relative_to(output_folder)),
     )
 
 
@@ -289,5 +298,53 @@ def _heatmap(
     ax.set_title("Object Location Heatmap")
 
     # Save the plot.
+    plt.savefig(output_file)
+    plt.close(fig)
+
+
+def _aspect_ratio_plot(
+    output_file: Path,
+    aspect_ratios: List[float],
+) -> None:
+    """Log-scaled histogram of w/h ratios.
+
+    Using log-scale puts 2:1 and 1:2 at symmetric distances from 1:1, which
+    matches how detector anchor tuning thinks about aspect ratios.
+    """
+    fig = plt.figure(figsize=(6, 6))
+    ax = fig.add_subplot(111)
+
+    if aspect_ratios:
+        # Clip to [0.1, 10] to keep degenerate ratios from dominating the axis.
+        clipped = np.clip(aspect_ratios, 0.1, 10.0)
+        log_ratios = np.log10(clipped)
+        ax.hist(log_ratios, bins=40, color="blue", alpha=0.5)
+        # Reference lines at 1:2, 1:1, 2:1.
+        for ref_ratio, label in [(0.5, "1:2"), (1.0, "1:1"), (2.0, "2:1")]:
+            ax.axvline(
+                x=np.log10(ref_ratio),
+                color="gray",
+                linestyle=":",
+                alpha=0.7,
+            )
+            ax.text(
+                np.log10(ref_ratio),
+                ax.get_ylim()[1] * 0.95,
+                label,
+                rotation=90,
+                verticalalignment="top",
+                horizontalalignment="right",
+                color="gray",
+                fontsize=8,
+            )
+        # Tick labels show real ratios, not log values.
+        ticks = [0.1, 0.25, 0.5, 1.0, 2.0, 4.0, 10.0]
+        ax.set_xticks(np.log10(ticks))
+        ax.set_xticklabels([f"{t:g}" for t in ticks])
+
+    ax.set_xlabel("Width / Height")
+    ax.set_ylabel("Number of Objects")
+    ax.set_title("Aspect Ratio Distribution (log scale)")
+
     plt.savefig(output_file)
     plt.close(fig)

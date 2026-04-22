@@ -1,7 +1,7 @@
-"""Regression tests for Phase 1 correctness bugs.
+"""Regression tests for Phase 1 correctness bugs and Phase 2 new insights.
 
-Each test targets a specific P0 item from the audit report. Tests are short
-and use synthetic fixtures so they can run without real datasets.
+Each test targets a specific audit item. Tests are short and use synthetic
+fixtures so they can run without real datasets.
 """
 from argparse import ArgumentParser
 from dataclasses import dataclass
@@ -168,3 +168,144 @@ def test_filename_matching_ignores_extensions(tmp_path: Path) -> None:
     assert result.sample_filenames_no_label == ["only_image.jpg"]
     assert result.num_labels_no_image == 1
     assert result.sample_filenames_no_image == ["only_label.xml"]
+
+
+# ==== Phase 2 ====
+
+
+# ---- 2.3 corrupt-image handling ----
+
+def test_analyze_images_skips_corrupt_files(tmp_path: Path) -> None:
+    folder = _make_image_folder(tmp_path, [(100, 100), (200, 200)])
+    # Create a file with a valid image extension but garbage contents.
+    (folder / "broken.png").write_bytes(b"not-an-image")
+    result = analyze.analyze_images(folder)
+    assert result.num_images == 2
+    assert "broken.png" in result.corrupt_files
+
+
+# ---- 3.3 tiny / huge object flags ----
+
+def test_tiny_and_huge_object_counts() -> None:
+    cat = Category(id=0, name="thing")
+    img = Image(id=0, filename="a.jpg", width=1000, height=1000)
+    tiny = SingleObjectDetection(
+        category=cat, box=BoundingBox(xmin=10, ymin=10, xmax=30, ymax=30)
+    )  # 20*20 / 1e6 = 0.04% -> tiny
+    huge = SingleObjectDetection(
+        category=cat, box=BoundingBox(xmin=100, ymin=100, xmax=900, ymax=900)
+    )  # 800*800 / 1e6 = 64% -> huge
+    normal = SingleObjectDetection(
+        category=cat, box=BoundingBox(xmin=400, ymin=400, xmax=500, ymax=500)
+    )  # 10000 / 1e6 = 1% -> neither
+    label_input = _FakeODInput(
+        categories=[cat],
+        labels=[ImageObjectDetection(image=img, objects=[tiny, huge, normal])],
+    )
+    result = analyze.analyze_object_detections(label_input)
+    assert result.classes[0].tiny_object_count == 1
+    assert result.classes[0].huge_object_count == 1
+    assert result.total.tiny_object_count == 1
+    assert result.total.huge_object_count == 1
+
+
+# ---- 3.4 edge-touching ----
+
+def test_edge_touching_detected() -> None:
+    cat = Category(id=0, name="thing")
+    img = Image(id=0, filename="a.jpg", width=1000, height=1000)
+    left_edge = SingleObjectDetection(
+        category=cat, box=BoundingBox(xmin=0, ymin=100, xmax=50, ymax=200)
+    )
+    right_edge = SingleObjectDetection(
+        category=cat, box=BoundingBox(xmin=500, ymin=500, xmax=1000, ymax=600)
+    )
+    interior = SingleObjectDetection(
+        category=cat, box=BoundingBox(xmin=200, ymin=200, xmax=400, ymax=400)
+    )
+    label_input = _FakeODInput(
+        categories=[cat],
+        labels=[
+            ImageObjectDetection(
+                image=img, objects=[left_edge, right_edge, interior]
+            )
+        ],
+    )
+    result = analyze.analyze_object_detections(label_input)
+    assert result.classes[0].edge_touching_count == 2
+
+
+# ---- 3.6 duplicate-annotation detection ----
+
+def test_duplicate_annotation_detection() -> None:
+    cat = Category(id=0, name="thing")
+    img = Image(id=0, filename="a.jpg", width=1000, height=1000)
+    a = SingleObjectDetection(
+        category=cat, box=BoundingBox(xmin=100, ymin=100, xmax=200, ymax=200)
+    )
+    # Near-identical (IoU ~ 0.92) -> flagged
+    a_dup = SingleObjectDetection(
+        category=cat, box=BoundingBox(xmin=102, ymin=102, xmax=202, ymax=202)
+    )
+    # Completely separate -> not flagged
+    b = SingleObjectDetection(
+        category=cat, box=BoundingBox(xmin=500, ymin=500, xmax=600, ymax=600)
+    )
+    label_input = _FakeODInput(
+        categories=[cat],
+        labels=[ImageObjectDetection(image=img, objects=[a, a_dup, b])],
+    )
+    result = analyze.analyze_object_detections(label_input)
+    assert len(result.duplicate_annotations) == 1
+    pair = result.duplicate_annotations[0]
+    assert pair.filename == "a.jpg"
+    assert pair.iou >= 0.9
+
+
+def test_box_iou_helpers() -> None:
+    box_a = BoundingBox(xmin=0, ymin=0, xmax=10, ymax=10)
+    # Identical.
+    assert analyze._box_iou(box_a, box_a) == 1.0
+    # No overlap.
+    box_far = BoundingBox(xmin=100, ymin=100, xmax=110, ymax=110)
+    assert analyze._box_iou(box_a, box_far) == 0.0
+    # Half-overlap: (5x10) / (10x10 + 5x10 - 5x10) = 50/100 = 0.5.
+    box_half = BoundingBox(xmin=5, ymin=0, xmax=15, ymax=10)
+    assert abs(analyze._box_iou(box_a, box_half) - (50 / 150)) < 1e-9
+
+
+# ---- 3.1 class imbalance ----
+
+def test_imbalance_balanced() -> None:
+    stats = present._compute_imbalance_stats([100, 100, 100, 100])
+    assert abs(stats.normalized_entropy - 1.0) < 1e-9
+    assert abs(stats.gini) < 1e-9
+    assert abs(stats.top_class_share - 0.25) < 1e-9
+    assert stats.under_represented_count == 0
+
+
+def test_imbalance_skewed() -> None:
+    # 95% in one class, four with 1% each.
+    stats = present._compute_imbalance_stats([95, 2, 1, 1, 1])
+    assert stats.normalized_entropy < 0.5
+    assert stats.gini > 0.5
+    assert abs(stats.top_class_share - 0.95) < 1e-9
+    # 1% exactly is not strictly less than 1% -> not counted.
+    # Only the 2% slice is not under, and the three 1% ones tie.
+    # We use `<` (strict), so 1/100 = 0.01 fails the `< 0.01` check -> 0 flagged.
+    # But 0 and empty-class counts would count. Here all classes > 0.
+
+
+def test_imbalance_empty() -> None:
+    stats = present._compute_imbalance_stats([])
+    assert stats.normalized_entropy == 0.0
+    assert stats.gini == 0.0
+    assert stats.top_class_share == 0.0
+
+
+def test_imbalance_single_class() -> None:
+    stats = present._compute_imbalance_stats([42])
+    # With a single non-zero class entropy is 0, gini is 0, top_share 1.0.
+    assert stats.normalized_entropy == 0.0
+    assert abs(stats.top_class_share - 1.0) < 1e-9
+    assert stats.gini == 0.0

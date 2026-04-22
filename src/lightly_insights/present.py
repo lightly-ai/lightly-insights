@@ -1,4 +1,5 @@
 import logging
+import math
 import random
 import shutil
 from dataclasses import dataclass
@@ -12,6 +13,10 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 from lightly_insights import plots
 from lightly_insights.analyze import ImageAnalysis, ObjectDetectionAnalysis
 from lightly_insights.plots import PlotPaths
+
+# Classes with fewer than this fraction of total objects are flagged as
+# under-represented (see ImbalanceStats).
+UNDER_REPRESENTED_FRACTION = 0.01
 
 logger = logging.getLogger(__name__)
 static_folder = Path(__file__).parent / "static"
@@ -43,6 +48,15 @@ class FilenameInsights:
 
 
 @dataclass(frozen=True)
+class ImbalanceStats:
+    entropy: float  # nats
+    normalized_entropy: float  # 0..1 (1 = perfectly balanced)
+    gini: float  # 0..1 (0 = perfectly balanced)
+    top_class_share: float  # 0..1
+    under_represented_count: int  # classes below UNDER_REPRESENTED_FRACTION
+
+
+@dataclass(frozen=True)
 class ObjectDetectionInsights:
     num_classes: int
     class_ids_most_common: List[int]  # Class ids ordered from most common.
@@ -51,6 +65,7 @@ class ObjectDetectionInsights:
     avg_objects_per_image: float
     avg_objects_per_class: float
     avg_images_per_class: float
+    imbalance: ImbalanceStats
 
 
 def create_html_report(
@@ -195,6 +210,10 @@ def _get_object_detection_insights(
     avg_objects_per_class = (num_objects / num_classes) if num_classes else 0.0
     avg_images_per_class = (num_images / num_classes) if num_classes else 0.0
 
+    imbalance = _compute_imbalance_stats(
+        [c.num_objects for c in od_analysis.classes.values()]
+    )
+
     return ObjectDetectionInsights(
         num_classes=num_classes,
         class_ids_most_common=class_ids_most_common,
@@ -203,6 +222,49 @@ def _get_object_detection_insights(
         avg_objects_per_image=avg_objects_per_image,
         avg_objects_per_class=avg_objects_per_class,
         avg_images_per_class=avg_images_per_class,
+        imbalance=imbalance,
+    )
+
+
+def _compute_imbalance_stats(class_counts: List[int]) -> ImbalanceStats:
+    """Entropy, Gini, top-class share, under-represented count for OD classes.
+
+    Classes with zero objects are excluded from entropy/Gini (they don't
+    represent a real slice of the dataset) but still counted for the
+    under-represented count.
+    """
+    nonzero = [c for c in class_counts if c > 0]
+    total = sum(nonzero)
+    if total == 0 or not nonzero:
+        return ImbalanceStats(
+            entropy=0.0,
+            normalized_entropy=0.0,
+            gini=0.0,
+            top_class_share=0.0,
+            under_represented_count=0,
+        )
+
+    probs = [c / total for c in nonzero]
+    entropy = -sum(p * math.log(p) for p in probs)
+    max_entropy = math.log(len(nonzero)) if len(nonzero) > 1 else 1.0
+    normalized_entropy = entropy / max_entropy if max_entropy > 0 else 1.0
+
+    sorted_counts = sorted(nonzero)
+    n = len(sorted_counts)
+    cum = sum((i + 1) * c for i, c in enumerate(sorted_counts))
+    gini = (2 * cum) / (n * total) - (n + 1) / n if n > 1 else 0.0
+
+    top_class_share = max(nonzero) / total
+    under_represented_count = sum(
+        1 for c in class_counts if c / total < UNDER_REPRESENTED_FRACTION
+    )
+
+    return ImbalanceStats(
+        entropy=entropy,
+        normalized_entropy=normalized_entropy,
+        gini=gini,
+        top_class_share=top_class_share,
+        under_represented_count=under_represented_count,
     )
 
 

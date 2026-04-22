@@ -106,6 +106,12 @@
                       <th scope="row">Avg objects per image</th>
                       <td>{{ "{0:.1f}".format(object_detection_insights.avg_objects_per_image) }}</td>
                     </tr>
+                    {% if image_analysis.corrupt_files|length > 0 %}
+                    <tr class="table-primary">
+                      <th scope="row">Corrupt / unreadable images</th>
+                      <td>{{ image_analysis.corrupt_files|length }}</td>
+                    </tr>
+                    {% endif %}
                   </tbody>
                 </table>
 
@@ -243,6 +249,70 @@
 
           </div>
 
+          {% if object_detection_insights.num_classes > 1 %}
+          <!-- Class imbalance summary -->
+          <div class="row mt-3 mb-3">
+            <div class="col-lg-3 col-md-6 mb-2">
+              <div class="card h-100 border-primary">
+                <div class="card-body p-2">
+                  <div class="text-secondary small">Balance (normalized entropy)</div>
+                  <div class="h5 mb-0">{{ "{0:.2f}".format(object_detection_insights.imbalance.normalized_entropy) }}</div>
+                  <div class="text-muted small">1.00 = perfectly balanced</div>
+                </div>
+              </div>
+            </div>
+            <div class="col-lg-3 col-md-6 mb-2">
+              <div class="card h-100 border-primary">
+                <div class="card-body p-2">
+                  <div class="text-secondary small">Gini coefficient</div>
+                  <div class="h5 mb-0">{{ "{0:.2f}".format(object_detection_insights.imbalance.gini) }}</div>
+                  <div class="text-muted small">0.00 = perfectly balanced</div>
+                </div>
+              </div>
+            </div>
+            <div class="col-lg-3 col-md-6 mb-2">
+              <div class="card h-100 border-primary">
+                <div class="card-body p-2">
+                  <div class="text-secondary small">Top class share</div>
+                  <div class="h5 mb-0">{{ "{0:.0f}".format(100 * object_detection_insights.imbalance.top_class_share) }} %</div>
+                  <div class="text-muted small">of all objects</div>
+                </div>
+              </div>
+            </div>
+            <div class="col-lg-3 col-md-6 mb-2">
+              <div class="card h-100 border-primary">
+                <div class="card-body p-2">
+                  <div class="text-secondary small">Under-represented classes</div>
+                  <div class="h5 mb-0">{{ object_detection_insights.imbalance.under_represented_count }}</div>
+                  <div class="text-muted small">&lt; 1 % of objects</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          {% endif %}
+
+          {% if object_detection_analysis.total.tiny_object_count > 0
+             or object_detection_analysis.total.huge_object_count > 0
+             or object_detection_analysis.total.edge_touching_count > 0
+             or object_detection_analysis.duplicate_annotations|length > 0 %}
+          <div class="alert alert-warning" role="alert">
+            <strong>Quality flags</strong>
+            <ul class="mb-0">
+              {% if object_detection_analysis.total.tiny_object_count > 0 %}
+              <li>{{ object_detection_analysis.total.tiny_object_count }} tiny objects (&lt; 0.5 % of image area) — may be below detector stride</li>
+              {% endif %}
+              {% if object_detection_analysis.total.huge_object_count > 0 %}
+              <li>{{ object_detection_analysis.total.huge_object_count }} huge objects (&gt; 50 % of image area) — check for mislabeled full-image boxes</li>
+              {% endif %}
+              {% if object_detection_analysis.total.edge_touching_count > 0 %}
+              <li>{{ object_detection_analysis.total.edge_touching_count }} edge-touching objects — truncated boxes are harder to learn</li>
+              {% endif %}
+              {% if object_detection_analysis.duplicate_annotations|length > 0 %}
+              <li>{{ object_detection_analysis.duplicate_annotations|length }} suspected duplicate annotations (IoU &ge; 0.9)</li>
+              {% endif %}
+            </ul>
+          </div>
+          {% endif %}
 
           {% with plots=object_detection_insights.plots %}
           {% include 'plots.html' %}
@@ -326,6 +396,24 @@
                       <th scope="row">Avg area</th>
                       <td>{{ "{0:.0f}".format(100 * class.avg_rel_area) }} %</td>
                     </tr>
+                    {% if class.tiny_object_count > 0 %}
+                    <tr>
+                      <th scope="row">Tiny objects (&lt; 0.5 % area)</th>
+                      <td>{{ class.tiny_object_count }}</td>
+                    </tr>
+                    {% endif %}
+                    {% if class.huge_object_count > 0 %}
+                    <tr>
+                      <th scope="row">Huge objects (&gt; 50 % area)</th>
+                      <td>{{ class.huge_object_count }}</td>
+                    </tr>
+                    {% endif %}
+                    {% if class.edge_touching_count > 0 %}
+                    <tr>
+                      <th scope="row">Edge-touching objects</th>
+                      <td>{{ class.edge_touching_count }}</td>
+                    </tr>
+                    {% endif %}
                   </tbody>
                 </table>
               </div>
