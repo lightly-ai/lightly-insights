@@ -92,36 +92,36 @@
   </div>
   {% endif %}
 
-  <!-- Summary strip -->
-  <div class="row mb-4">
-    <div class="col-md-3">
-      <div class="card">
-        <div class="card-body text-center">
+  <!-- Summary strip: total + 5 severity buckets + review queue on one line -->
+  <div class="row row-cols-2 row-cols-md-7 g-2 mb-4">
+    <div class="col">
+      <div class="card h-100">
+        <div class="card-body text-center px-2 py-3">
           <div class="text-secondary small text-uppercase">Total findings</div>
           <div class="h2 mb-0">{{ findings|length }}</div>
         </div>
       </div>
     </div>
     {% for sev_label, count, color in severity_buckets %}
-    <div class="col-md-2">
-      <div class="card">
-        <div class="card-body text-center">
+    <div class="col">
+      <div class="card h-100">
+        <div class="card-body text-center px-2 py-3">
           <div class="text-secondary small text-uppercase">{{ sev_label }}</div>
-          <div class="h3 mb-0" style="color: {{ color }};">{{ count }}</div>
+          <div class="h2 mb-0" style="color: {{ color }};">{{ count }}</div>
         </div>
       </div>
     </div>
     {% endfor %}
-    <div class="col-md-3">
-      <div class="card bg-primary text-white">
-        <div class="card-body text-center">
+    <div class="col">
+      <div class="card h-100 bg-primary text-white">
+        <div class="card-body text-center px-2 py-3">
           <div class="small text-uppercase">Review queue</div>
           <div class="h2 mb-0">{{ review_queue|length }}</div>
+          {% if review_queue_path %}
           <div class="small">
-            {% if review_queue_path %}
             <a href="{{ review_queue_path }}" class="text-white">Download CSV</a>
-            {% endif %}
           </div>
+          {% endif %}
         </div>
       </div>
     </div>
