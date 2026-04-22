@@ -31,6 +31,8 @@ from lightly_insights.core.finding import Finding, Severity
 from lightly_insights.core.overview_plots import (
     render_class_composition,
     render_confidence_distribution,
+    render_cumulative_review_burden,
+    render_findings_by_check,
     render_spatial_heatmap,
 )
 from lightly_insights.core.review_queue import (
@@ -91,6 +93,8 @@ def create_findings_report(
     class_plot = render_class_composition(output_folder, dataset)
     confidence_plot = render_confidence_distribution(output_folder, dataset)
     spatial_plot = render_spatial_heatmap(output_folder, dataset)
+    by_check_plot = render_findings_by_check(output_folder, findings)
+    burden_plot = render_cumulative_review_burden(output_folder, review_queue)
 
     env = Environment(
         loader=FileSystemLoader(searchpath=_template_folder),
@@ -109,6 +113,8 @@ def create_findings_report(
             "class_composition": class_plot,
             "confidence_distribution": confidence_plot,
             "spatial_heatmap": spatial_plot,
+            "findings_by_check": by_check_plot,
+            "review_burden": burden_plot,
         },
         date_generated=datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z"),
     )

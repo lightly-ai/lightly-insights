@@ -8,13 +8,16 @@ check-based pipeline and doesn't pick up the legacy plot catalogue.
 """
 from __future__ import annotations
 
+from collections import Counter
 from pathlib import Path
-from typing import List
+from typing import List, Sequence
 
 import numpy as np
 from matplotlib import pyplot as plt
 
 from lightly_insights.core.dataset import Dataset
+from lightly_insights.core.finding import Finding
+from lightly_insights.core.review_queue import ReviewItem
 
 
 def render_class_composition(output_folder: Path, dataset: Dataset) -> str:
@@ -140,6 +143,100 @@ def render_spatial_heatmap(
     fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
     fig.tight_layout()
     path = output_folder / "spatial_heatmap.png"
+    plt.savefig(path, dpi=120)
+    plt.close(fig)
+    return path.name
+
+
+def render_findings_by_check(
+    output_folder: Path, findings: Sequence[Finding]
+) -> str:
+    """Horizontal bar chart: findings grouped by check_id.
+
+    Tells the reviewer whether their problems concentrate in one check
+    (→ a systemic fix) or spread across many (→ individual review).
+    """
+    if not findings:
+        return ""
+    counts = Counter(f.check_id for f in findings)
+    # Sort by count ascending so the worst offender is at the top of the
+    # rendered bar chart (matplotlib plots barh bottom-up).
+    items = sorted(counts.items(), key=lambda kv: kv[1])
+    names = [k for k, _ in items]
+    values = [v for _, v in items]
+
+    fig = plt.figure(figsize=(6, max(2, 0.3 * len(names) + 1)))
+    ax = fig.add_subplot(111)
+    bars = ax.barh(names, values, color="#e67e22", alpha=0.85)
+    for bar, c in zip(bars, values):
+        ax.text(
+            bar.get_width() + max(values) * 0.01,
+            bar.get_y() + bar.get_height() / 2,
+            f"{c}",
+            va="center",
+            fontsize=8,
+        )
+    ax.set_xlabel("Findings")
+    ax.set_title("Findings by check")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    fig.tight_layout()
+    path = output_folder / "findings_by_check.png"
+    plt.savefig(path, dpi=120)
+    plt.close(fig)
+    return path.name
+
+
+def render_cumulative_review_burden(
+    output_folder: Path, review_queue: Sequence[ReviewItem]
+) -> str:
+    """Cumulative importance coverage as a function of items reviewed.
+
+    X = top-N items. Y = fraction of total priority-weight covered by
+    those items, in percent. Answers "how many do I need to review to
+    get most of the value?"
+    """
+    if not review_queue:
+        return ""
+    priorities = [max(0.0, item.priority) for item in review_queue]
+    total = sum(priorities)
+    if total <= 0:
+        return ""
+    # Ranks are already 1-based and sorted descending by priority.
+    xs = list(range(1, len(priorities) + 1))
+    cumulative = np.cumsum(priorities) / total * 100
+    # "Eighty-percent" marker for context.
+    target = 80.0
+    reached_at = next(
+        (i + 1 for i, v in enumerate(cumulative) if v >= target),
+        None,
+    )
+
+    fig = plt.figure(figsize=(6, 4))
+    ax = fig.add_subplot(111)
+    ax.plot(xs, cumulative, color="#3498db", linewidth=2)
+    ax.fill_between(xs, 0, cumulative, color="#3498db", alpha=0.15)
+    ax.axhline(target, color="grey", linestyle="--", linewidth=0.8)
+    ax.text(
+        xs[-1], target + 1.5,
+        f"{int(target)} % coverage",
+        ha="right", va="bottom", fontsize=8, color="grey",
+    )
+    if reached_at is not None:
+        ax.axvline(reached_at, color="#c0392b", linestyle="--", linewidth=0.8)
+        ax.text(
+            reached_at + 0.3, 5,
+            f"review ≤ {reached_at}",
+            ha="left", va="bottom", fontsize=8, color="#c0392b",
+        )
+    ax.set_xlabel("Top-N items reviewed")
+    ax.set_ylabel("Coverage (%)")
+    ax.set_ylim(0, 105)
+    ax.set_title("Cumulative review burden")
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    fig.tight_layout()
+    path = output_folder / "review_burden.png"
     plt.savefig(path, dpi=120)
     plt.close(fig)
     return path.name

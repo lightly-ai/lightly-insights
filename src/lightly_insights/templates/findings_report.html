@@ -63,6 +63,22 @@
     </div>
   </div>
 
+  <!-- Findings-by-check + review burden — context for the queue below -->
+  {% if overview_plots.findings_by_check or overview_plots.review_burden %}
+  <div class="row mt-4 g-3">
+    {% if overview_plots.findings_by_check %}
+    <div class="col-md-6">
+      <img src="{{ overview_plots.findings_by_check }}" class="img-fluid border rounded" alt="Findings by check">
+    </div>
+    {% endif %}
+    {% if overview_plots.review_burden %}
+    <div class="col-md-6">
+      <img src="{{ overview_plots.review_burden }}" class="img-fluid border rounded" alt="Cumulative review burden">
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
+
   <!-- Priority review queue -->
   {% if review_queue %}
   <h3 class="mt-4">Priority review queue</h3>
