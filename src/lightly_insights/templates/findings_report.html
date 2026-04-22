@@ -92,33 +92,35 @@
   </div>
   {% endif %}
 
-  <!-- Summary strip: total + 5 severity buckets + review queue on one line -->
-  <div class="row row-cols-2 row-cols-md-7 g-2 mb-4">
+  <!-- Summary strip: total + 5 severity buckets + review queue on one line.
+       Plain .col auto-distributes equal widths no matter how many siblings
+       share the row (Bootstrap 5's row-cols-*-N only supports N up to 6). -->
+  <div class="row g-2 mb-4">
     <div class="col">
       <div class="card h-100">
-        <div class="card-body text-center px-2 py-3">
-          <div class="text-secondary small text-uppercase">Total findings</div>
-          <div class="h2 mb-0">{{ findings|length }}</div>
+        <div class="card-body text-center p-2">
+          <div class="text-secondary small text-uppercase">Total</div>
+          <div class="h3 mb-0">{{ findings|length }}</div>
         </div>
       </div>
     </div>
     {% for sev_label, count, color in severity_buckets %}
     <div class="col">
       <div class="card h-100">
-        <div class="card-body text-center px-2 py-3">
+        <div class="card-body text-center p-2">
           <div class="text-secondary small text-uppercase">{{ sev_label }}</div>
-          <div class="h2 mb-0" style="color: {{ color }};">{{ count }}</div>
+          <div class="h3 mb-0" style="color: {{ color }};">{{ count }}</div>
         </div>
       </div>
     </div>
     {% endfor %}
     <div class="col">
       <div class="card h-100 bg-primary text-white">
-        <div class="card-body text-center px-2 py-3">
+        <div class="card-body text-center p-2">
           <div class="small text-uppercase">Review queue</div>
-          <div class="h2 mb-0">{{ review_queue|length }}</div>
+          <div class="h3 mb-0">{{ review_queue|length }}</div>
           {% if review_queue_path %}
-          <div class="small">
+          <div class="small" style="font-size: 0.75rem;">
             <a href="{{ review_queue_path }}" class="text-white">Download CSV</a>
           </div>
           {% endif %}
