@@ -8,6 +8,9 @@ up in ``list_checks()`` and be picked up by ``run_all``.
 from lightly_insights.checks import (  # noqa: F401
     background_scarcity,
     class_conflict,
+    confidence_class_bias,
+    confidence_low_pass,
+    confidence_size_mismatch,
     corrupt_images,
     duplicate_annotation,
     geometric_validity,

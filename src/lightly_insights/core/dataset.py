@@ -54,6 +54,13 @@ class Annotation:
     ``annotation_id`` is a stable integer assigned by the Dataset
     constructor — Findings reference annotations by id so reporters can
     look them up.
+
+    ``confidence`` is the autolabeler's own score (0..1) when the
+    annotation came from a model. ``None`` for human labels or when the
+    source didn't record one. ``source`` is a short tag identifying who
+    produced the annotation (``"human"``, ``"sam"``, ``"yolo-v11"``,
+    ``"grounding-dino"``, ...). Checks that only make sense on autolabels
+    filter by ``source != "human"`` and ``confidence is not None``.
     """
 
     annotation_id: int
@@ -62,6 +69,8 @@ class Annotation:
     class_name: str
     kind: AnnotationKind
     geometry: Geometry
+    confidence: Optional[float] = None
+    source: Optional[str] = None
 
     @property
     def area(self) -> float:
@@ -70,6 +79,13 @@ class Annotation:
     @property
     def tight_box(self) -> Box:
         return self.geometry.tight_box
+
+    @property
+    def is_autolabeled(self) -> bool:
+        """True if this annotation carries a confidence score or a non-human source."""
+        if self.source is not None and self.source != "human":
+            return True
+        return self.confidence is not None
 
 
 @dataclass

@@ -33,12 +33,18 @@ def build_dataset(
     image_analysis: ImageAnalysis,
     od_analysis: Optional[ObjectDetectionAnalysis] = None,
     label_input: Optional[ObjectDetectionInput] = None,
+    source: Optional[str] = None,
 ) -> Dataset:
     """Assemble a Dataset from the existing analysis objects.
 
     ``label_input`` is required if you want per-annotation checks to work.
     Without it we still build a valid Dataset but the ``annotations`` list
     is empty — image-level checks still run.
+
+    ``source`` tags every annotation (``"human"``, ``"sam"``, ...) so
+    autolabel-specific checks can filter. Labelformat's
+    ``SingleObjectDetection.confidence`` is carried through automatically
+    when present.
     """
     images = [
         Image(
@@ -75,6 +81,8 @@ def build_dataset(
                             xmax=obj.box.xmax,
                             ymax=obj.box.ymax,
                         ),
+                        confidence=getattr(obj, "confidence", None),
+                        source=source,
                     )
                 )
                 ann_id += 1
