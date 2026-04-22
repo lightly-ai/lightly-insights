@@ -8,5 +8,10 @@ up in ``list_checks()`` and be picked up by ``run_all``.
 from lightly_insights.checks import (  # noqa: F401
     class_conflict,
     corrupt_images,
+    duplicate_annotation,
+    mask_fragmentation,
+    polygon_axis_aligned,
+    polygon_self_intersect,
+    shape_outlier,
     starved_class,
 )

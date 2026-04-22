@@ -100,6 +100,106 @@ class Polygon:
         ys = [p[1] for p in self.points]
         return Box(xmin=min(xs), ymin=min(ys), xmax=max(xs), ymax=max(ys))
 
+    def self_intersects(self) -> bool:
+        """True if any two non-adjacent edges cross.
+
+        O(n^2) sweep — fine for the annotation scale we expect (polygons
+        rarely exceed a few hundred vertices). For massive polygons a
+        Bentley-Ottmann sweep would be O(n log n), but the per-dataset
+        count makes that premature.
+        """
+        n = len(self.points)
+        if n < 4:
+            return False
+        edges = [
+            (self.points[i], self.points[(i + 1) % n]) for i in range(n)
+        ]
+        for i in range(n):
+            for j in range(i + 1, n):
+                # Skip adjacent edges (they share an endpoint by construction).
+                if j == i + 1 or (i == 0 and j == n - 1):
+                    continue
+                if _segments_intersect(edges[i][0], edges[i][1], edges[j][0], edges[j][1]):
+                    return True
+        return False
+
+    def axis_aligned_edge_fraction(self, angle_tolerance_deg: float = 2.0) -> float:
+        """Fraction of edges that are horizontal or vertical within tolerance.
+
+        High values (>0.6) are a red flag: labelers who drew axis-aligned
+        rectangles instead of tracing the object outline.
+        """
+        import math
+
+        n = len(self.points)
+        if n < 3:
+            return 0.0
+        tol = math.tan(math.radians(angle_tolerance_deg))
+        axis = 0
+        for i in range(n):
+            x1, y1 = self.points[i]
+            x2, y2 = self.points[(i + 1) % n]
+            dx = abs(x2 - x1)
+            dy = abs(y2 - y1)
+            if dx == 0 and dy == 0:
+                continue  # degenerate edge, ignore
+            # Horizontal: dy/dx small. Vertical: dx/dy small.
+            if dx > 0 and dy / dx <= tol:
+                axis += 1
+            elif dy > 0 and dx / dy <= tol:
+                axis += 1
+        # Non-degenerate edges only; denominator re-counted above.
+        denom = sum(
+            1
+            for i in range(n)
+            if self.points[i] != self.points[(i + 1) % n]
+        )
+        return axis / denom if denom > 0 else 0.0
+
+
+def _orientation(p: Tuple[float, float], q: Tuple[float, float], r: Tuple[float, float]) -> int:
+    """0 = collinear, >0 = counter-clockwise, <0 = clockwise. Uses the sign
+    of the cross product of PQ and PR."""
+    val = (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
+    if val > 0:
+        return 1
+    if val < 0:
+        return -1
+    return 0
+
+
+def _on_segment(p: Tuple[float, float], q: Tuple[float, float], r: Tuple[float, float]) -> bool:
+    """True if q lies on segment pr, given that p, q, r are collinear."""
+    return (
+        min(p[0], r[0]) <= q[0] <= max(p[0], r[0])
+        and min(p[1], r[1]) <= q[1] <= max(p[1], r[1])
+    )
+
+
+def _segments_intersect(
+    p1: Tuple[float, float],
+    p2: Tuple[float, float],
+    p3: Tuple[float, float],
+    p4: Tuple[float, float],
+) -> bool:
+    """Do segment p1p2 and segment p3p4 intersect? Standard CCW test."""
+    o1 = _orientation(p1, p2, p3)
+    o2 = _orientation(p1, p2, p4)
+    o3 = _orientation(p3, p4, p1)
+    o4 = _orientation(p3, p4, p2)
+    if o1 != o2 and o3 != o4:
+        return True
+    # Collinear special cases.
+    if o1 == 0 and _on_segment(p1, p3, p2):
+        return True
+    if o2 == 0 and _on_segment(p1, p4, p2):
+        return True
+    if o3 == 0 and _on_segment(p3, p1, p4):
+        return True
+    if o4 == 0 and _on_segment(p3, p2, p4):
+        return True
+    return False
+
 
 @dataclass(frozen=True)
 class Mask:
