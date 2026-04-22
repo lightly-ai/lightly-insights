@@ -104,6 +104,28 @@
   </div>
   {% endif %}
 
+  <!-- Dataset at a glance -->
+  {% if overview_plots.class_composition or overview_plots.confidence_distribution or overview_plots.spatial_heatmap %}
+  <h3 class="mt-5">Dataset at a glance</h3>
+  <div class="row mt-3 g-3">
+    {% if overview_plots.class_composition %}
+    <div class="col-md-4">
+      <img src="{{ overview_plots.class_composition }}" class="img-fluid border rounded" alt="Class composition">
+    </div>
+    {% endif %}
+    {% if overview_plots.confidence_distribution %}
+    <div class="col-md-4">
+      <img src="{{ overview_plots.confidence_distribution }}" class="img-fluid border rounded" alt="Confidence distribution">
+    </div>
+    {% endif %}
+    {% if overview_plots.spatial_heatmap %}
+    <div class="col-md-4">
+      <img src="{{ overview_plots.spatial_heatmap }}" class="img-fluid border rounded" alt="Spatial heatmap">
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
+
   <!-- Findings grouped by category -->
   <h3 class="mt-5">All findings by category</h3>
   {% for category, group in findings_by_category %}

@@ -28,6 +28,11 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from lightly_insights.core.dataset import Dataset
 from lightly_insights.core.finding import Finding, Severity
+from lightly_insights.core.overview_plots import (
+    render_class_composition,
+    render_confidence_distribution,
+    render_spatial_heatmap,
+)
 from lightly_insights.core.review_queue import (
     ReviewItem,
     export_review_queue_csv,
@@ -82,6 +87,11 @@ def create_findings_report(
     if not output_static.exists():
         shutil.copytree(src=_static_folder, dst=output_static)
 
+    # Overview plots. Each returns "" if the underlying data isn't there.
+    class_plot = render_class_composition(output_folder, dataset)
+    confidence_plot = render_confidence_distribution(output_folder, dataset)
+    spatial_plot = render_spatial_heatmap(output_folder, dataset)
+
     env = Environment(
         loader=FileSystemLoader(searchpath=_template_folder),
         undefined=StrictUndefined,
@@ -95,6 +105,11 @@ def create_findings_report(
         review_queue_path="review_queue.csv",
         severity_buckets=buckets,
         sources_joined=sources_joined,
+        overview_plots={
+            "class_composition": class_plot,
+            "confidence_distribution": confidence_plot,
+            "spatial_heatmap": spatial_plot,
+        },
         date_generated=datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z"),
     )
     index_path = output_folder / "index.html"
