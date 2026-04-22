@@ -199,7 +199,7 @@
   <!-- Findings grouped by category -->
   <h3 class="mt-5">All findings by category</h3>
   {% for category, group in findings_by_category %}
-  <details {% if loop.first %}open{% endif %} class="mt-2">
+  <details class="mt-2">
     <summary>
       {{ category|capitalize }} <span class="text-muted">({{ group|length }})</span>
     </summary>
