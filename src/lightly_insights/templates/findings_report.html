@@ -28,6 +28,70 @@
     sources: {{ sources_joined }}
   </p>
 
+  <!-- Health scorecard -->
+  {% if health.subscores %}
+  <div class="card border-primary mb-4">
+    <div class="card-body">
+      <div class="row align-items-center">
+        <div class="col-md-3 text-center border-end">
+          <div class="text-secondary small text-uppercase">Dataset health</div>
+          {% if health.overall is not none %}
+          <div style="font-size: 3.5rem; font-weight: 600; line-height: 1;">
+            {{ "{0:.0f}".format(health.overall) }}
+            <span class="text-muted" style="font-size: 1.2rem;">/ 100</span>
+          </div>
+          <div class="h4 mb-0">Grade {{ health.grade }}</div>
+          {% else %}
+          <div class="text-muted">Not enough signal<br>to score.</div>
+          {% endif %}
+        </div>
+        <div class="col-md-9">
+          <div class="row">
+            {% for sub in health.subscores %}
+            <div class="col-md-6 mb-2">
+              <div class="d-flex justify-content-between">
+                <strong>{{ sub.name }}</strong>
+                {% if sub.score >= 0 %}
+                <span>
+                  <span class="badge bg-secondary">{{ sub.grade }}</span>
+                  {{ "{0:.0f}".format(sub.score) }}
+                </span>
+                {% else %}
+                <span class="text-muted">—</span>
+                {% endif %}
+              </div>
+              <div class="text-muted small">{{ sub.detail }}</div>
+              {% if sub.score >= 0 %}
+              <div class="progress" style="height: 4px;">
+                <div class="progress-bar
+                            {% if sub.score >= 80 %}bg-success
+                            {% elif sub.score >= 60 %}bg-warning
+                            {% else %}bg-danger{% endif %}"
+                     role="progressbar"
+                     style="width: {{ sub.score }}%;"
+                     aria-valuenow="{{ sub.score | round(0, 'floor') | int }}"
+                     aria-valuemin="0" aria-valuemax="100"></div>
+              </div>
+              {% endif %}
+            </div>
+            {% endfor %}
+          </div>
+          {% if health.issues %}
+          <div class="mt-2">
+            <div class="text-secondary small text-uppercase mb-1">Top issues to fix</div>
+            <ul class="mb-0 small">
+              {% for issue in health.issues %}
+              <li>{{ issue }}</li>
+              {% endfor %}
+            </ul>
+          </div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
   <!-- Summary strip -->
   <div class="row mb-4">
     <div class="col-md-3">

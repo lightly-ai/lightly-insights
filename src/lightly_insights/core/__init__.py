@@ -14,6 +14,7 @@ from lightly_insights.core.dataset import (
 )
 from lightly_insights.core.finding import Finding, Severity
 from lightly_insights.core.geometry import Box, Mask, Polygon
+from lightly_insights.core.health import HealthScore, Subscore, compute_health
 from lightly_insights.core.registry import list_checks, run_all
 from lightly_insights.core.review_queue import (
     ReviewItem,
@@ -29,12 +30,15 @@ __all__ = [
     "Check",
     "Dataset",
     "Finding",
+    "HealthScore",
     "Image",
     "Mask",
     "Polygon",
     "ReviewItem",
     "Severity",
+    "Subscore",
     "build_review_queue",
+    "compute_health",
     "export_review_queue_csv",
     "list_checks",
     "register_check",

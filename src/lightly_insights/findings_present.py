@@ -33,6 +33,7 @@ from lightly_insights.core.attribution import (
 from lightly_insights.core.dataset import Dataset
 from lightly_insights.core.drilldown import build_drilldowns
 from lightly_insights.core.finding import Finding, Severity
+from lightly_insights.core.health import compute_health
 from lightly_insights.core.overview_plots import (
     render_class_composition,
     render_confidence_distribution,
@@ -109,6 +110,9 @@ def create_findings_report(
     attribution = compute_attribution(dataset, findings)
     attribution_plot = render_attribution_plot(output_folder, attribution)
 
+    # Dataset health scorecard, driven by the findings list.
+    health = compute_health(dataset, findings)
+
     # Per-finding drill-down panels (top-N of the review queue).
     drilldown_panels = build_drilldowns(
         output_folder=output_folder,
@@ -147,6 +151,7 @@ def create_findings_report(
         drilldown_anchor_by_rank=drilldown_anchor_by_rank,
         attribution=attribution,
         attribution_plot=attribution_plot,
+        health=health,
         date_generated=datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z"),
     )
     index_path = output_folder / "index.html"
