@@ -79,6 +79,50 @@
   </div>
   {% endif %}
 
+  <!-- Attribution by source -->
+  {% if attribution and attribution|length > 1 %}
+  <h3 class="mt-4">Findings by source</h3>
+  <p class="text-muted small">
+    Who (or which autolabeler) produced the annotations that findings
+    touched. Higher "per 100" = worse offender.
+  </p>
+  <div class="row g-3">
+    {% if attribution_plot %}
+    <div class="col-md-6">
+      <img src="{{ attribution_plot }}" class="img-fluid border rounded" alt="Findings by source">
+    </div>
+    {% endif %}
+    <div class="col-md-6">
+      <div class="table-responsive">
+        <table class="table table-sm table-hover">
+          <thead>
+            <tr>
+              <th>Source</th>
+              <th>Annotations</th>
+              <th>Findings</th>
+              <th>Per 100</th>
+              <th>Top checks</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in attribution %}
+            <tr>
+              <td><code>{{ row.source }}</code></td>
+              <td>{{ row.num_annotations }}</td>
+              <td>{{ row.num_findings }}</td>
+              <td>{{ "%.1f"|format(row.findings_per_100) }}</td>
+              <td class="small">
+                {% for cid, n in row.top_check_ids %}{{ cid }} ({{ n }}){% if not loop.last %}, {% endif %}{% endfor %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
   <!-- Priority review queue -->
   {% if review_queue %}
   <h3 class="mt-4">Priority review queue</h3>
@@ -100,9 +144,19 @@
       <tbody>
         {% for item in review_queue %}
         <tr class="queue-row">
-          <td class="text-muted">{{ item.rank }}</td>
+          <td class="text-muted">
+            {% if drilldown_anchor_by_rank.get(item.rank) %}
+            <a href="#{{ drilldown_anchor_by_rank[item.rank] }}" class="text-decoration-none">{{ item.rank }}</a>
+            {% else %}
+            {{ item.rank }}
+            {% endif %}
+          </td>
           <td>
+            {% if drilldown_anchor_by_rank.get(item.rank) %}
+            <a href="#{{ drilldown_anchor_by_rank[item.rank] }}" class="severity-{{ item.severity }} text-decoration-none">{{ item.title }}</a>
+            {% else %}
             <span class="severity-{{ item.severity }}">{{ item.title }}</span>
+            {% endif %}
             <div class="small text-muted">{{ item.finding_id }}</div>
           </td>
           <td>
@@ -183,6 +237,47 @@
     </div>
   </details>
   {% endfor %}
+
+  {% if drilldown_panels %}
+  <h3 class="mt-5">Drill-down (top {{ drilldown_panels|length }})</h3>
+  <p class="text-muted small">
+    Each row in the priority review queue links here. Red = the flagged
+    annotation. Green = a typical annotation of the same class for comparison.
+  </p>
+  <div>
+    {% for panel in drilldown_panels %}
+    <div id="{{ panel.anchor }}" class="card mt-3">
+      <div class="card-header d-flex justify-content-between">
+        <span>
+          <span class="badge bg-secondary me-1">#{{ panel.rank }}</span>
+          <strong>{{ panel.title }}</strong>
+        </span>
+        <a href="#" class="small text-decoration-none">back to top</a>
+      </div>
+      <div class="card-body">
+        <div class="row g-3">
+          <div class="col-md-6">
+            <img src="{{ panel.flagged_src }}" class="img-fluid border rounded" alt="flagged">
+            <div class="small text-muted mt-1">{{ panel.flagged_caption }}</div>
+          </div>
+          {% if panel.exemplar_src %}
+          <div class="col-md-6">
+            <img src="{{ panel.exemplar_src }}" class="img-fluid border rounded" alt="exemplar">
+            <div class="small text-muted mt-1">{{ panel.exemplar_caption }}</div>
+          </div>
+          {% else %}
+          <div class="col-md-6 d-flex align-items-center justify-content-center text-muted small">
+            No unflagged example found for this class.
+          </div>
+          {% endif %}
+        </div>
+        <p class="mt-3 small">{{ panel.detail }}</p>
+        <p class="mt-1 small"><em>Action:</em> {{ panel.action }}</p>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
 
   <p class="mt-5 text-center text-muted small">
     Generated with <a href="https://github.com/lightly-ai/lightly-insights">Lightly Insights</a>.

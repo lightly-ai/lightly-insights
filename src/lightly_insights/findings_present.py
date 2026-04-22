@@ -26,7 +26,12 @@ from typing import Iterable, List, Sequence
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
+from lightly_insights.core.attribution import (
+    compute_attribution,
+    render_attribution_plot,
+)
 from lightly_insights.core.dataset import Dataset
+from lightly_insights.core.drilldown import build_drilldowns
 from lightly_insights.core.finding import Finding, Severity
 from lightly_insights.core.overview_plots import (
     render_class_composition,
@@ -96,6 +101,20 @@ def create_findings_report(
     by_check_plot = render_findings_by_check(output_folder, findings)
     burden_plot = render_cumulative_review_burden(output_folder, review_queue)
 
+    # Source attribution (skips silently when no annotation has a source).
+    attribution = compute_attribution(dataset, findings)
+    attribution_plot = render_attribution_plot(output_folder, attribution)
+
+    # Per-finding drill-down panels (top-N of the review queue).
+    drilldown_panels = build_drilldowns(
+        output_folder=output_folder,
+        dataset=dataset,
+        findings=findings,
+        review_queue=review_queue,
+    )
+    # Lookup used by the review queue table to turn rank -> anchor.
+    drilldown_anchor_by_rank = {p.rank: p.anchor for p in drilldown_panels}
+
     env = Environment(
         loader=FileSystemLoader(searchpath=_template_folder),
         undefined=StrictUndefined,
@@ -116,6 +135,10 @@ def create_findings_report(
             "findings_by_check": by_check_plot,
             "review_burden": burden_plot,
         },
+        drilldown_panels=drilldown_panels,
+        drilldown_anchor_by_rank=drilldown_anchor_by_rank,
+        attribution=attribution,
+        attribution_plot=attribution_plot,
         date_generated=datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z"),
     )
     index_path = output_folder / "index.html"
