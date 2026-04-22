@@ -463,3 +463,110 @@ def test_cli_images_only(tmp_path: Path) -> None:
     ])
     assert rc == 0
     assert (out / "index.html").exists()
+
+
+# ==== Phase 4: higher-value insights ====
+
+
+# ---- #2 anchor recommendations ----
+
+def test_anchor_recommendations_cluster_sizes() -> None:
+    cat = Category(id=0, name="thing")
+    img = Image(id=0, filename="a.jpg", width=1000, height=1000)
+    # Three obvious clusters: tiny, medium, large.
+    boxes = []
+    for _ in range(30):
+        boxes.append(BoundingBox(xmin=0, ymin=0, xmax=10, ymax=10))   # tiny
+        boxes.append(BoundingBox(xmin=0, ymin=0, xmax=100, ymax=100))  # medium
+        boxes.append(BoundingBox(xmin=0, ymin=0, xmax=500, ymax=500))  # large
+    label_input = _FakeODInput(
+        categories=[cat],
+        labels=[
+            ImageObjectDetection(
+                image=img,
+                objects=[SingleObjectDetection(category=cat, box=b) for b in boxes],
+            )
+        ],
+    )
+    result = analyze.analyze_object_detections(label_input)
+    anchors = result.recommended_anchors
+    # Default k=9; with 90 boxes should produce 9 anchors.
+    assert len(anchors) == 9
+    # Sorted by area ascending.
+    areas = [w * h for w, h in anchors]
+    assert areas == sorted(areas)
+
+
+def test_anchor_recommendations_skip_when_too_few() -> None:
+    cat = Category(id=0, name="thing")
+    img = Image(id=0, filename="a.jpg", width=1000, height=1000)
+    label_input = _FakeODInput(
+        categories=[cat],
+        labels=[
+            ImageObjectDetection(
+                image=img,
+                objects=[SingleObjectDetection(
+                    category=cat, box=BoundingBox(xmin=0, ymin=0, xmax=10, ymax=10)
+                )],
+            )
+        ],
+    )
+    result = analyze.analyze_object_detections(label_input)
+    # 1 box < 9 clusters -> empty.
+    assert result.recommended_anchors == []
+
+
+# ---- #4 class-inconsistent boxes ----
+
+def test_class_conflict_detection() -> None:
+    cat_a = Category(id=0, name="car")
+    cat_b = Category(id=1, name="truck")
+    img = Image(id=0, filename="a.jpg", width=1000, height=1000)
+    # Two overlapping boxes of different classes.
+    a = SingleObjectDetection(
+        category=cat_a, box=BoundingBox(xmin=100, ymin=100, xmax=300, ymax=300)
+    )
+    b = SingleObjectDetection(
+        category=cat_b, box=BoundingBox(xmin=120, ymin=120, xmax=320, ymax=320)
+    )  # IoU > 0.5
+    # Same class overlap — should NOT land in conflicts.
+    c = SingleObjectDetection(
+        category=cat_a, box=BoundingBox(xmin=500, ymin=500, xmax=700, ymax=700)
+    )
+    d = SingleObjectDetection(
+        category=cat_a, box=BoundingBox(xmin=510, ymin=510, xmax=710, ymax=710)
+    )  # same class duplicate (IoU high but same cat)
+    label_input = _FakeODInput(
+        categories=[cat_a, cat_b],
+        labels=[ImageObjectDetection(image=img, objects=[a, b, c, d])],
+    )
+    result = analyze.analyze_object_detections(label_input)
+    assert len(result.class_conflicts) == 1
+    conflict = result.class_conflicts[0]
+    assert {conflict.category_a, conflict.category_b} == {"car", "truck"}
+    assert conflict.iou > 0.5
+    # Same-class pair should appear in duplicate_annotations (IoU ~0.86 passes 0.9? let's relax)
+    # That one is IoU ~0.87 so below DUPLICATE_IOU_THRESHOLD=0.9 — ends up in neither,
+    # which is fine.
+
+
+# ---- #1 train/val/test leakage ----
+
+def test_leakage_detector_returns_empty_without_imagehash(tmp_path: Path) -> None:
+    """Without imagehash, the detector no-ops gracefully.
+
+    imagehash may actually be installed in CI; we skip this test if so.
+    """
+    import importlib.util
+    if importlib.util.find_spec("imagehash") is not None:
+        import pytest as _pytest
+        _pytest.skip("imagehash installed; no-op path not reachable")
+    (tmp_path / "train").mkdir()
+    (tmp_path / "val").mkdir()
+    train = _make_image_folder(tmp_path / "train", [(100, 100)])
+    val = _make_image_folder(tmp_path / "val", [(100, 100)])
+    analyses = {
+        "train": analyze.analyze_images(train),
+        "val": analyze.analyze_images(val),
+    }
+    assert analyze.detect_cross_split_leakage(analyses) == []

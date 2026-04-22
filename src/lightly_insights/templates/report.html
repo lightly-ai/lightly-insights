@@ -388,7 +388,8 @@
           {% if object_detection_analysis.total.tiny_object_count > 0
              or object_detection_analysis.total.huge_object_count > 0
              or object_detection_analysis.total.edge_touching_count > 0
-             or object_detection_analysis.duplicate_annotations|length > 0 %}
+             or object_detection_analysis.duplicate_annotations|length > 0
+             or object_detection_analysis.class_conflicts|length > 0 %}
           <div class="alert alert-warning" role="alert">
             <strong>Quality flags</strong>
             <ul class="mb-0">
@@ -402,9 +403,56 @@
               <li>{{ object_detection_analysis.total.edge_touching_count }} edge-touching objects — truncated boxes are harder to learn</li>
               {% endif %}
               {% if object_detection_analysis.duplicate_annotations|length > 0 %}
-              <li>{{ object_detection_analysis.duplicate_annotations|length }} suspected duplicate annotations (IoU &ge; 0.9)</li>
+              <li>{{ object_detection_analysis.duplicate_annotations|length }} suspected duplicate annotations (same class, IoU &ge; 0.9)</li>
+              {% endif %}
+              {% if object_detection_analysis.class_conflicts|length > 0 %}
+              <li>
+                {{ object_detection_analysis.class_conflicts|length }}
+                class-conflict pairs (different classes, IoU &ge; 0.5) — often indicates a mislabel. Examples:
+                <ul class="small mb-0">
+                  {% for pair in object_detection_analysis.class_conflicts[:3] %}
+                  <li><code>{{ pair.filename }}</code>:
+                      <em>{{ pair.category_a }}</em> vs
+                      <em>{{ pair.category_b }}</em>
+                      (IoU = {{ "{0:.2f}".format(pair.iou) }})</li>
+                  {% endfor %}
+                  {% if object_detection_analysis.class_conflicts|length > 3 %}
+                  <li class="text-muted">… and {{ object_detection_analysis.class_conflicts|length - 3 }} more</li>
+                  {% endif %}
+                </ul>
+              </li>
               {% endif %}
             </ul>
+          </div>
+          {% endif %}
+
+          {% if object_detection_analysis.recommended_anchors|length > 0 %}
+          <div class="mt-3">
+            <h5>Recommended anchor sizes</h5>
+            <p class="text-muted small">
+              k-means clustering (k = {{ object_detection_analysis.recommended_anchors|length }}) over all object
+              widths × heights. Usable as anchor priors for YOLO / SSD-style detectors.
+            </p>
+            <div class="table-responsive">
+              <table class="table table-sm table-hover mb-0">
+                <thead>
+                  <tr>
+                    <th scope="col">#</th>
+                    <th scope="col">Width × Height (px)</th>
+                    <th scope="col">Aspect ratio</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for anchor in object_detection_analysis.recommended_anchors %}
+                  <tr>
+                    <td>{{ loop.index }}</td>
+                    <td>{{ "{0:.0f}".format(anchor[0]) }} × {{ "{0:.0f}".format(anchor[1]) }}</td>
+                    <td>{{ "{0:.2f}".format(anchor[0] / anchor[1]) if anchor[1] > 0 else "-" }}</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
           </div>
           {% endif %}
 

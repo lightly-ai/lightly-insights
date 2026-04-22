@@ -41,6 +41,12 @@ BLUR_LAPLACIAN_VAR = 50.0  # lower than this -> likely blurry
 EXTREME_ASPECT_RATIO = 5.0  # w/h > 5 or < 0.2 -> aspect outlier
 QUALITY_SAMPLE_CAP = 1000  # images we scan for luminance/blur
 
+# Class-inconsistent box detection (different classes, overlapping boxes).
+CLASS_CONFLICT_IOU = 0.5  # IoU >= this with different classes -> possible mislabel
+
+# Anchor recommendation.
+ANCHOR_DEFAULT_K = 9  # YOLO-style 9-anchor default
+
 
 @dataclass(frozen=True)
 class QualityFlags:
@@ -69,6 +75,22 @@ class ImageAnalysis:
 
 @dataclass(frozen=True)
 class DuplicatePair:
+    filename: str
+    box_a: Tuple[float, float, float, float]
+    box_b: Tuple[float, float, float, float]
+    iou: float
+    category_a: str
+    category_b: str
+
+
+@dataclass(frozen=True)
+class ClassConflictPair:
+    """Same-image boxes from *different* classes with high IoU.
+
+    Typically indicates a labeling mistake — the same object annotated under
+    two different classes.
+    """
+
     filename: str
     box_a: Tuple[float, float, float, float]
     box_b: Tuple[float, float, float, float]
@@ -145,6 +167,10 @@ class ObjectDetectionAnalysis:
     # sample selection.
     objects_per_filename: Dict[str, int] = field(default_factory=dict)
     classes_per_filename: Dict[str, int] = field(default_factory=dict)
+    # Boxes from different classes with high IoU — probable mislabels.
+    class_conflicts: List[ClassConflictPair] = field(default_factory=list)
+    # Recommended anchor sizes in pixels, sorted by area (smallest first).
+    recommended_anchors: List[Tuple[float, float]] = field(default_factory=list)
 
 
 def _read_image_size(
@@ -402,6 +428,165 @@ def analyze_images(
     )
 
 
+@dataclass(frozen=True)
+class LeakageGroup:
+    """A cluster of near-identical images spread across multiple splits."""
+
+    # Mapping split name -> filenames in that split that are near-duplicates
+    # of the other entries in this group.
+    files_by_split: Dict[str, List[str]]
+    # Number of distinct splits this cluster touches (>= 2 for it to be a leak).
+    num_splits: int
+
+
+def detect_cross_split_leakage(
+    analyses_by_split: Dict[str, "ImageAnalysis"],
+    hamming_threshold: int = 5,
+    max_workers: int = 16,
+) -> List[LeakageGroup]:
+    """Find images present in more than one split via perceptual hashing.
+
+    Takes the result of running `analyze_images` on each split folder. Hashes
+    every image, unions near-duplicates, and returns groups that span at
+    least two splits. Empty when `imagehash` is not installed.
+
+    Typical usage:
+
+        analyses = {
+            split: analyze.analyze_images(folder)
+            for split, folder in {"train": ..., "val": ..., "test": ...}.items()
+        }
+        leaks = analyze.detect_cross_split_leakage(analyses)
+    """
+    try:
+        import imagehash  # type: ignore[import]
+    except ImportError:
+        logger.warning(
+            "imagehash not installed; cannot detect cross-split leakage. "
+            "Install the 'near-duplicates' extra."
+        )
+        return []
+
+    # Collect (split, filename, full_path) tuples.
+    entries: List[Tuple[str, str, Path]] = []
+    for split_name, analysis in analyses_by_split.items():
+        for rel_name in sorted(analysis.filename_set):
+            entries.append(
+                (split_name, rel_name, analysis.image_folder / rel_name)
+            )
+
+    def _hash(entry: Tuple[str, str, Path]) -> Tuple[str, str, Optional[object]]:
+        split, name, path = entry
+        try:
+            with Image.open(path) as img:
+                return split, name, imagehash.dhash(img)
+        except (UnidentifiedImageError, OSError):
+            return split, name, None
+
+    hashed: List[Tuple[str, str, object]] = []
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        for split, name, h in tqdm.tqdm(
+            pool.map(_hash, entries),
+            total=len(entries),
+            desc="Hashing splits for leakage detection",
+            unit="images",
+        ):
+            if h is not None:
+                hashed.append((split, name, h))
+
+    # Union-find across all (split, filename) pairs.
+    keys = [(s, n) for s, n, _ in hashed]
+    parent: Dict[Tuple[str, str], Tuple[str, str]] = {k: k for k in keys}
+
+    def find(x: Tuple[str, str]) -> Tuple[str, str]:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a: Tuple[str, str], b: Tuple[str, str]) -> None:
+        parent[find(a)] = find(b)
+
+    for i in range(len(hashed)):
+        s_i, n_i, h_i = hashed[i]
+        for j in range(i + 1, len(hashed)):
+            s_j, n_j, h_j = hashed[j]
+            if h_i - h_j <= hamming_threshold:  # type: ignore[operator]
+                union((s_i, n_i), (s_j, n_j))
+
+    # Bucket members by root. Only return groups touching 2+ splits.
+    groups: Dict[Tuple[str, str], List[Tuple[str, str]]] = {}
+    for k in keys:
+        groups.setdefault(find(k), []).append(k)
+
+    result: List[LeakageGroup] = []
+    for members in groups.values():
+        by_split: Dict[str, List[str]] = {}
+        for split, name in members:
+            by_split.setdefault(split, []).append(name)
+        if len(by_split) >= 2:
+            # Sort filenames inside each split for stable output.
+            for split in by_split:
+                by_split[split].sort()
+            result.append(
+                LeakageGroup(files_by_split=by_split, num_splits=len(by_split))
+            )
+    # Largest leaks first.
+    result.sort(key=lambda g: -sum(len(v) for v in g.files_by_split.values()))
+    return result
+
+
+def _kmeans_anchors(
+    sizes: List[Tuple[float, float]],
+    k: int = ANCHOR_DEFAULT_K,
+    iters: int = 30,
+    seed: int = 42,
+) -> List[Tuple[float, float]]:
+    """Compute k anchor sizes via k-means clustering on (w, h) pairs.
+
+    Pure numpy, no sklearn dependency. Returns anchors sorted by area
+    (smallest first). Empty list if `sizes` has fewer than `k` entries.
+    """
+    if len(sizes) < k:
+        return []
+    rng = np.random.default_rng(seed)
+    data = np.asarray(sizes, dtype=np.float64)
+    # k-means++ init: pick one point, then each next point with probability
+    # proportional to squared distance from its nearest existing center.
+    centers = np.empty((k, 2), dtype=np.float64)
+    centers[0] = data[rng.integers(0, len(data))]
+    for i in range(1, k):
+        d2 = np.min(
+            np.sum((data[:, None, :] - centers[:i]) ** 2, axis=2), axis=1
+        )
+        total = d2.sum()
+        if total == 0:
+            centers[i] = data[rng.integers(0, len(data))]
+            continue
+        probs = d2 / total
+        idx = int(rng.choice(len(data), p=probs))
+        centers[i] = data[idx]
+
+    for _ in range(iters):
+        # Assign each point to nearest center.
+        dists = np.sum((data[:, None, :] - centers) ** 2, axis=2)
+        labels = np.argmin(dists, axis=1)
+        # Recompute centers (median is more robust than mean for anchors).
+        new_centers = centers.copy()
+        for c in range(k):
+            pts = data[labels == c]
+            if len(pts) > 0:
+                new_centers[c] = np.median(pts, axis=0)
+        if np.allclose(new_centers, centers):
+            break
+        centers = new_centers
+
+    # Sort by area.
+    areas = centers[:, 0] * centers[:, 1]
+    order = np.argsort(areas)
+    return [(float(centers[i, 0]), float(centers[i, 1])) for i in order]
+
+
 def _box_iou(a: BoundingBox, b: BoundingBox) -> float:
     """Intersection-over-union of two bounding boxes in the same image."""
     x1 = max(a.xmin, b.xmin)
@@ -426,6 +611,7 @@ def analyze_object_detections(
     num_images_zero_objects = 0
     filename_set = set()
     duplicate_annotations: List[DuplicatePair] = []
+    class_conflicts: List[ClassConflictPair] = []
     total_data = ClassAnalysis.create_empty(id=-1, name="[All classes]")
     class_data = {
         category.id: ClassAnalysis.create_empty(id=category.id, name=category.name)
@@ -535,21 +721,40 @@ def analyze_object_detections(
             ):
                 class_datum.sample_filenames.append(label.image.filename)
 
-        # Duplicate-annotation detection (pairwise IoU within this image).
+        # Pairwise IoU within this image: catches duplicates (same class,
+        # near-identical box) and class conflicts (different class, high IoU).
         for i in range(len(label.objects)):
             for j in range(i + 1, len(label.objects)):
-                iou = _box_iou(label.objects[i].box, label.objects[j].box)
-                if iou >= DUPLICATE_IOU_THRESHOLD:
-                    box_a = label.objects[i].box
-                    box_b = label.objects[j].box
-                    duplicate_annotations.append(
-                        DuplicatePair(
+                obj_a = label.objects[i]
+                obj_b = label.objects[j]
+                iou = _box_iou(obj_a.box, obj_b.box)
+                if iou < CLASS_CONFLICT_IOU:
+                    continue
+                box_a = obj_a.box
+                box_b = obj_b.box
+                box_a_tuple = (box_a.xmin, box_a.ymin, box_a.xmax, box_a.ymax)
+                box_b_tuple = (box_b.xmin, box_b.ymin, box_b.xmax, box_b.ymax)
+                if obj_a.category.id == obj_b.category.id:
+                    if iou >= DUPLICATE_IOU_THRESHOLD:
+                        duplicate_annotations.append(
+                            DuplicatePair(
+                                filename=label.image.filename,
+                                box_a=box_a_tuple,
+                                box_b=box_b_tuple,
+                                iou=iou,
+                                category_a=obj_a.category.name,
+                                category_b=obj_b.category.name,
+                            )
+                        )
+                else:
+                    class_conflicts.append(
+                        ClassConflictPair(
                             filename=label.image.filename,
-                            box_a=(box_a.xmin, box_a.ymin, box_a.xmax, box_a.ymax),
-                            box_b=(box_b.xmin, box_b.ymin, box_b.xmax, box_b.ymax),
+                            box_a=box_a_tuple,
+                            box_b=box_b_tuple,
                             iou=iou,
-                            category_a=label.objects[i].category.name,
-                            category_b=label.objects[j].category.name,
+                            category_a=obj_a.category.name,
+                            category_b=obj_b.category.name,
                         )
                     )
 
@@ -573,6 +778,8 @@ def analyze_object_detections(
                 num_objects_per_category[category_id]
             ] += 1
 
+    recommended_anchors = _kmeans_anchors(total_data.object_sizes_abs)
+
     return ObjectDetectionAnalysis(
         num_images=num_images,
         num_images_zero_objects=num_images_zero_objects,
@@ -584,4 +791,6 @@ def analyze_object_detections(
         cooccurrence_class_ids=list(category_ids),
         objects_per_filename=objects_per_filename,
         classes_per_filename=classes_per_filename,
+        class_conflicts=class_conflicts,
+        recommended_anchors=recommended_anchors,
     )
