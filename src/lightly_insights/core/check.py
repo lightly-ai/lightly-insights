@@ -18,11 +18,14 @@ invoking ``run()``.
 """
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from typing import ClassVar, FrozenSet, List, Type
 
 from lightly_insights.core.dataset import AnnotationKind, Dataset
 from lightly_insights.core.finding import Finding
+
+logger = logging.getLogger(__name__)
 
 # Module-level registry. Populated by @register_check as modules are imported.
 _CHECK_REGISTRY: "dict[str, Type[Check]]" = {}
@@ -54,11 +57,23 @@ class Check(ABC):
 
 
 def register_check(cls: Type[Check]) -> Type[Check]:
-    """Class decorator that adds the check to the global registry."""
+    """Class decorator that adds the check to the global registry.
+
+    Duplicate ``check_id`` values log a warning and overwrite the prior
+    registration. In practice that happens during module reloading in
+    tests or when a user forgets to rename a pasted-in check; the
+    warning catches typos. Silent overwrite was a trap because the
+    "first" registration is lost with no trace.
+    """
     if not getattr(cls, "check_id", None):
         raise ValueError(f"Check {cls.__name__} must define a check_id class attribute.")
-    if cls.check_id in _CHECK_REGISTRY:
-        # Later definitions win — useful for test overrides.
-        pass
+    existing = _CHECK_REGISTRY.get(cls.check_id)
+    if existing is not None and existing is not cls:
+        logger.warning(
+            "Check id %r is being overwritten: %s replaces %s.",
+            cls.check_id,
+            f"{cls.__module__}.{cls.__name__}",
+            f"{existing.__module__}.{existing.__name__}",
+        )
     _CHECK_REGISTRY[cls.check_id] = cls
     return cls

@@ -149,15 +149,21 @@ def create_findings_report(
 
 
 def _severity_buckets(findings: Iterable[Finding]) -> List:
-    """Return (label, count, color) triples for the summary strip."""
+    """Return (label, count, color) triples for the summary strip.
+
+    Ranges cover the full 0-100 severity space with no gaps, so custom
+    severities like 25 or 45 still get counted (under their nearer bucket).
+    """
     ranges = [
-        ("Critical", (Severity.CRITICAL, 20), "#c0392b"),
-        ("High", (Severity.HIGH, 40), "#e67e22"),
-        ("Medium", (Severity.MEDIUM, 60), "#f1c40f"),
-        ("Info/Low", (Severity.LOW, 100), "#7f8c8d"),
+        ("Critical", (0, 20), "#c0392b"),
+        ("High", (20, 40), "#e67e22"),
+        ("Medium", (40, 60), "#f1c40f"),
+        ("Low", (60, 80), "#95a5a6"),
+        ("Info", (80, 101), "#7f8c8d"),
     ]
     buckets: List = []
+    findings_list = list(findings)
     for label, (lo, hi), color in ranges:
-        count = sum(1 for f in findings if lo <= f.severity < hi)
+        count = sum(1 for f in findings_list if lo <= f.severity < hi)
         buckets.append((label, count, color))
     return buckets

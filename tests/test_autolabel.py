@@ -94,9 +94,30 @@ def test_confidence_low_pass_flags_below_threshold() -> None:
         categories=[Category(id=0, name="car")],
     )
     findings = run_all(ds, only=["confidence_low_pass"])
+    # Aggregated per class: one finding even with N affected annotations.
     assert len(findings) == 1
     assert findings[0].affected_annotations == [0]
-    assert findings[0].evidence["confidence"] == 0.15
+    assert findings[0].evidence["count"] == 1
+    assert findings[0].evidence["class_name"] == "car"
+
+
+def test_confidence_low_pass_aggregates_per_class() -> None:
+    """500 low-confidence annotations should yield 1 finding, not 500."""
+    anns = []
+    for i in range(500):
+        anns.append(_ann(
+            i, f"i_{i}.jpg", 0, "car", Box(0, 0, 10, 10),
+            confidence=0.1, source="yolo",
+        ))
+    imgs = [Image(filename=f"i_{i}.jpg", width=100, height=100) for i in range(500)]
+    ds = Dataset(
+        images=imgs, annotations=anns,
+        categories=[Category(id=0, name="car")],
+    )
+    findings = run_all(ds, only=["confidence_low_pass"])
+    assert len(findings) == 1
+    assert findings[0].evidence["count"] == 500
+    assert len(findings[0].affected_annotations) == 500
 
 
 # ---- Confidence × size mismatch ----

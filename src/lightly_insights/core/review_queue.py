@@ -20,11 +20,11 @@ consumed by LightlyStudio directly. Lower ``rank`` = look at first.
 from __future__ import annotations
 
 import csv
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
-from lightly_insights.core.dataset import Dataset
+from lightly_insights.core.dataset import Annotation, Dataset
 from lightly_insights.core.finding import Finding
 
 
@@ -47,7 +47,7 @@ def build_review_queue(
     max_items: Optional[int] = None,
 ) -> List[ReviewItem]:
     """Rank findings + their affected annotations into a review queue."""
-    ann_by_id: Dict[int, "object"] = {a.annotation_id: a for a in dataset.annotations}
+    ann_by_id: Dict[int, Annotation] = {a.annotation_id: a for a in dataset.annotations}
 
     rows: List[ReviewItem] = []
     for f in findings:
@@ -107,25 +107,20 @@ def build_review_queue(
                 )
 
     # Higher priority = looked at first. Break ties by severity (lower=worse),
-    # then by filename for determinism.
-    rows.sort(key=lambda r: (-r.priority, r.severity, r.filename, r.annotation_id or 0))
+    # then filename, then annotation_id (Nones sort last).
+    rows.sort(
+        key=lambda r: (
+            -r.priority,
+            r.severity,
+            r.filename,
+            r.annotation_id is None,
+            r.annotation_id if r.annotation_id is not None else 0,
+        )
+    )
     if max_items is not None:
         rows = rows[:max_items]
-    # Assign ranks.
-    return [
-        ReviewItem(
-            rank=i + 1,
-            priority=r.priority,
-            finding_id=r.finding_id,
-            severity=r.severity,
-            filename=r.filename,
-            annotation_id=r.annotation_id,
-            confidence=r.confidence,
-            title=r.title,
-            action=r.action,
-        )
-        for i, r in enumerate(rows)
-    ]
+    # Assign ranks via dataclasses.replace so we don't duplicate all fields.
+    return [replace(r, rank=i + 1) for i, r in enumerate(rows)]
 
 
 def export_review_queue_csv(items: Sequence[ReviewItem], output_path: Path) -> Path:

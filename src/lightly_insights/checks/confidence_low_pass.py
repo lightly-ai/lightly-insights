@@ -1,19 +1,19 @@
 """Low-confidence autolabels that slipped past whatever threshold produced them.
 
-If the autolabel pipeline was supposed to filter at e.g. 0.5 but some
-0.2-confidence annotations made it through, that's usually a threshold-
-misconfiguration bug. Flag them so they can be removed or re-reviewed.
-
-We also emit a finding when a small fraction of the dataset carries
-confidence while most doesn't — a telltale sign that a batch from a
-different pipeline got mixed in.
+Aggregated one finding per class so a dataset with 20 % low-confidence
+annotations doesn't explode into 20k individual findings. The review
+queue still fan-outs per affected annotation (every entry in
+``affected_annotations`` becomes one queue row), so nothing is lost
+for reviewers — the HTML report and the JSON snapshot just stay a
+readable size.
 """
 from __future__ import annotations
 
-from typing import List
+from collections import defaultdict
+from typing import Dict, List
 
 from lightly_insights.core.check import Check, register_check
-from lightly_insights.core.dataset import AnnotationKind, Dataset
+from lightly_insights.core.dataset import Annotation, AnnotationKind, Dataset
 from lightly_insights.core.finding import Finding, Severity
 
 LOW_CONFIDENCE_THRESHOLD = 0.3
@@ -29,40 +29,42 @@ class ConfidenceLowPassCheck(Check):
     )
 
     def applies_to(self, dataset: Dataset) -> bool:
-        # Only relevant when the dataset actually carries confidence scores.
         return any(a.confidence is not None for a in dataset.annotations)
 
     def run(self, dataset: Dataset) -> List[Finding]:
-        findings: List[Finding] = []
+        by_class: Dict[str, List[Annotation]] = defaultdict(list)
         for ann in dataset.annotations:
-            if ann.confidence is None:
+            if ann.confidence is None or ann.confidence >= LOW_CONFIDENCE_THRESHOLD:
                 continue
-            if ann.confidence >= LOW_CONFIDENCE_THRESHOLD:
-                continue
+            by_class[ann.class_name].append(ann)
+
+        findings: List[Finding] = []
+        for class_name, anns in sorted(by_class.items()):
+            mean_conf = sum(a.confidence for a in anns) / len(anns)  # type: ignore[misc]
             findings.append(
                 Finding(
                     check_id=self.check_id,
                     severity=Severity.MEDIUM,
                     category=self.category,
                     title=(
-                        f"Low-confidence '{ann.class_name}' annotation "
-                        f"(conf={ann.confidence:.2f})"
+                        f"{len(anns)} low-confidence '{class_name}' annotation(s)"
                     ),
                     detail=(
-                        f"Annotation on {ann.image_filename} has confidence "
-                        f"{ann.confidence:.2f}, below the review threshold "
-                        f"of {LOW_CONFIDENCE_THRESHOLD:.2f}."
+                        f"{len(anns)} annotation(s) of class '{class_name}' "
+                        f"have confidence below {LOW_CONFIDENCE_THRESHOLD:.2f} "
+                        f"(mean {mean_conf:.2f})."
                     ),
                     action=(
-                        "Send to human review, or raise the autolabeler's "
-                        "confidence threshold."
+                        "Send the bottom-N to human review, or raise the "
+                        "autolabeler's confidence threshold."
                     ),
-                    affected_images=[ann.image_filename],
-                    affected_annotations=[ann.annotation_id],
+                    affected_images=sorted({a.image_filename for a in anns}),
+                    affected_annotations=sorted(a.annotation_id for a in anns),
                     evidence={
-                        "confidence": round(ann.confidence, 4),
-                        "class_name": ann.class_name,
-                        "source": ann.source,
+                        "class_name": class_name,
+                        "count": len(anns),
+                        "mean_confidence": round(mean_conf, 4),
+                        "threshold": LOW_CONFIDENCE_THRESHOLD,
                     },
                 )
             )

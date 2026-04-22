@@ -46,15 +46,20 @@ def build_dataset(
     ``SingleObjectDetection.confidence`` is carried through automatically
     when present.
     """
-    images = [
-        Image(
-            filename=name,
-            width=w,
-            height=h,
-            path=image_analysis.image_folder / name,
+    # Only set ``path`` when the file is actually on local disk. Remote-
+    # or manifest-backed datasets shouldn't incur repeated stat() calls
+    # in downstream checks trying to open the image.
+    images = []
+    for name, (w, h) in image_analysis.filename_to_size.items():
+        candidate = image_analysis.image_folder / name
+        images.append(
+            Image(
+                filename=name,
+                width=w,
+                height=h,
+                path=candidate if candidate.exists() else None,
+            )
         )
-        for name, (w, h) in image_analysis.filename_to_size.items()
-    ]
 
     categories: list = []
     if od_analysis is not None:

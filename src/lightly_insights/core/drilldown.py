@@ -19,6 +19,9 @@ from pathlib import Path
 from statistics import median
 from typing import Dict, List, Optional, Sequence, Tuple
 
+from PIL import Image as PILImage
+from PIL import ImageDraw, UnidentifiedImageError
+
 from lightly_insights.core.dataset import Annotation, AnnotationKind, Dataset
 from lightly_insights.core.finding import Finding
 from lightly_insights.core.review_queue import ReviewItem
@@ -69,19 +72,18 @@ def build_drilldowns(
     drill_dir = output_folder / "drilldown"
     drill_dir.mkdir(parents=True, exist_ok=True)
 
+    # Precompute id -> Annotation so downstream lookups are O(1) even when
+    # annotation ids aren't contiguous (e.g. ml-proposal ids start at 10M).
+    ann_by_id: Dict[int, Annotation] = {
+        a.annotation_id: a for a in dataset.annotations
+    }
     exemplar_cache: Dict[int, Tuple[str, str]] = {}  # class_id -> (path, caption)
 
     panels: List[DrilldownPanel] = []
     for item in list(review_queue)[:max_items]:
         if item.annotation_id is None:
             continue
-        ann = dataset.annotations[item.annotation_id] if (
-            0 <= item.annotation_id < len(dataset.annotations)
-            and dataset.annotations[item.annotation_id].annotation_id == item.annotation_id
-        ) else next(
-            (a for a in dataset.annotations if a.annotation_id == item.annotation_id),
-            None,
-        )
+        ann = ann_by_id.get(item.annotation_id)
         if ann is None:
             continue
 
@@ -199,8 +201,6 @@ def _draw_annotation(
     or the geometry can't be drawn.
     """
     try:
-        from PIL import Image as PILImage
-        from PIL import ImageDraw, UnidentifiedImageError
         with PILImage.open(src) as img:
             im = img.convert("RGB")
             orig_w, orig_h = im.size
