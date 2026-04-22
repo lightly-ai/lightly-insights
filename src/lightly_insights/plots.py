@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Counter, Tuple, Union
+from typing import Counter, List, Optional, Tuple, Union
 
 import numpy as np
 from matplotlib import pyplot as plt
@@ -18,6 +18,7 @@ class PlotPaths:
     rel_area: str
     objects_per_image: str
     heatmap: str
+    aspect_ratio: str
 
 
 def create_object_plots(
@@ -36,6 +37,7 @@ def create_object_plots(
     rel_area_path = plot_folder / "rel_area.png"
     objects_per_image_path = plot_folder / "objects_per_image.png"
     heatmap_path = plot_folder / "heatmap.png"
+    aspect_ratio_path = plot_folder / "aspect_ratio.png"
 
     # Bucket by multiples of 20px.
     size_histogram_abs = Counter(
@@ -63,15 +65,15 @@ def create_object_plots(
         title="Object Sizes in Percent  (buckets by 5%)",
     )
 
-    # Side length histogram. Bucket by multiples of 20px.
+    # Side length histogram. Bucket by multiples of 50px.
     side_length_avg_histogram = Counter(
-        50.0 * round((w + h / 2) / 50) for w, h in class_analysis.object_sizes_abs
+        50.0 * round(((w + h) / 2) / 50) for w, h in class_analysis.object_sizes_abs
     )
     _histogram(
         output_file=side_length_avg_path,
         hist=side_length_avg_histogram,
         title="Object Side Length Average (buckets by 50px)",
-        xlabel="Width/2 + Height/2 (px)",
+        xlabel="(Width + Height) / 2 (px)",
         ylabel="Number of Objects",
         bar_width=50,
         x_average_line=True,
@@ -108,6 +110,12 @@ def create_object_plots(
         heatmap=class_analysis.heatmap,
     )
 
+    # Aspect-ratio distribution (log-scale so 2:1 and 1:2 are symmetric).
+    _aspect_ratio_plot(
+        output_file=aspect_ratio_path,
+        aspect_ratios=class_analysis.aspect_ratios,
+    )
+
     return PlotPaths(
         object_sizes_abs=str(object_sizes_abs_path.relative_to(output_folder)),
         object_sizes_rel=str(object_sizes_rel_path.relative_to(output_folder)),
@@ -115,6 +123,7 @@ def create_object_plots(
         rel_area=str(rel_area_path.relative_to(output_folder)),
         objects_per_image=str(objects_per_image_path.relative_to(output_folder)),
         heatmap=str(heatmap_path.relative_to(output_folder)),
+        aspect_ratio=str(aspect_ratio_path.relative_to(output_folder)),
     )
 
 
@@ -289,5 +298,182 @@ def _heatmap(
     ax.set_title("Object Location Heatmap")
 
     # Save the plot.
+    plt.savefig(output_file)
+    plt.close(fig)
+
+
+def per_class_aspect_overlay(
+    output_file: Path,
+    classes: List[Tuple[str, List[float]]],
+) -> None:
+    """One overlay histogram of aspect ratios for all classes on the same axes.
+
+    `classes` is a list of (class_name, aspect_ratios). Empty classes are skipped.
+    """
+    fig = plt.figure(figsize=(8, 5))
+    ax = fig.add_subplot(111)
+    cmap = plt.get_cmap("tab10")
+    bins = np.linspace(-1.0, 1.0, 30)  # log10 of [0.1, 10]
+    plotted = 0
+    for i, (name, ratios) in enumerate(classes):
+        if not ratios:
+            continue
+        clipped = np.clip(ratios, 0.1, 10.0)
+        ax.hist(
+            np.log10(clipped),
+            bins=bins,
+            alpha=0.4,
+            label=name,
+            color=cmap(i % 10),
+        )
+        plotted += 1
+    if plotted > 0:
+        ticks = [0.1, 0.25, 0.5, 1.0, 2.0, 4.0, 10.0]
+        ax.set_xticks(np.log10(ticks))
+        ax.set_xticklabels([f"{t:g}" for t in ticks])
+        ax.legend(loc="best", fontsize=8)
+    ax.set_xlabel("Width / Height")
+    ax.set_ylabel("Number of Objects")
+    ax.set_title("Aspect Ratio by Class (overlaid, log scale)")
+    fig.tight_layout()
+    plt.savefig(output_file)
+    plt.close(fig)
+
+
+def heatmap_overlay(
+    output_file: Path,
+    heatmap: NDArray[np.float_],
+    background_path: Optional[Path],
+) -> None:
+    """Blend the object-location heatmap onto a representative sample image.
+
+    Falls back to the pure heatmap if no background is provided.
+    """
+    from PIL import Image as PILImage  # local import keeps pyplot-only callers cheap
+
+    fig = plt.figure(figsize=(6, 6))
+    ax = fig.add_subplot(111)
+    if background_path is not None and background_path.exists():
+        try:
+            with PILImage.open(background_path) as img:
+                bg = img.convert("RGB")
+                bg.thumbnail((heatmap.shape[1] * 8, heatmap.shape[0] * 8))
+                ax.imshow(bg, extent=[0, 100, 100, 0])
+        except Exception:  # pragma: no cover -- defensive
+            pass
+    ax.imshow(
+        heatmap,
+        cmap="hot",
+        alpha=0.45,
+        extent=[0, 100, 100, 0],
+        interpolation="nearest",
+    )
+    ax.set_xlabel("X (%)")
+    ax.set_ylabel("Y (%)")
+    ax.set_title("Object Location Heatmap (overlaid on sample)")
+    fig.tight_layout()
+    plt.savefig(output_file)
+    plt.close(fig)
+
+
+def object_count_vs_image_size(
+    output_file: Path,
+    image_areas: List[float],
+    object_counts: List[int],
+) -> None:
+    """Scatter of image area vs. number of objects per image."""
+    fig = plt.figure(figsize=(6, 5))
+    ax = fig.add_subplot(111)
+    if image_areas and object_counts:
+        ax.scatter(image_areas, object_counts, alpha=0.5, s=12)
+    ax.set_xlabel("Image area (pixels)")
+    ax.set_ylabel("Objects in image")
+    ax.set_title("Objects per image vs. image size")
+    ax.set_xscale("log")
+    fig.tight_layout()
+    plt.savefig(output_file)
+    plt.close(fig)
+
+
+def cooccurrence_plot(
+    output_file: Path,
+    matrix: NDArray[np.int_],
+    class_names: List[str],
+) -> None:
+    """Render a co-occurrence heatmap with class-name tick labels."""
+    fig = plt.figure(figsize=(8, 7))
+    ax = fig.add_subplot(111)
+
+    # Log-scale color so a few dominant pairs don't wash out the rest.
+    # +1 keeps zero-valued cells visible as the lightest shade.
+    display = np.log1p(matrix.astype(np.float64))
+    im = ax.imshow(display, cmap="Blues", interpolation="nearest")
+
+    # Annotate cells with the raw counts.
+    n = matrix.shape[0]
+    max_val = float(matrix.max()) if matrix.size else 0.0
+    for i in range(n):
+        for j in range(n):
+            val = int(matrix[i, j])
+            if val == 0:
+                continue
+            color = "white" if display[i, j] > np.log1p(max_val) * 0.5 else "black"
+            ax.text(j, i, str(val), ha="center", va="center", fontsize=7, color=color)
+
+    ax.set_xticks(range(n))
+    ax.set_yticks(range(n))
+    ax.set_xticklabels(class_names, rotation=45, ha="right", fontsize=8)
+    ax.set_yticklabels(class_names, fontsize=8)
+    ax.set_title("Class Co-occurrence (images containing both classes)")
+    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="log(1 + count)")
+    fig.tight_layout()
+    plt.savefig(output_file)
+    plt.close(fig)
+
+
+def _aspect_ratio_plot(
+    output_file: Path,
+    aspect_ratios: List[float],
+) -> None:
+    """Log-scaled histogram of w/h ratios.
+
+    Using log-scale puts 2:1 and 1:2 at symmetric distances from 1:1, which
+    matches how detector anchor tuning thinks about aspect ratios.
+    """
+    fig = plt.figure(figsize=(6, 6))
+    ax = fig.add_subplot(111)
+
+    if aspect_ratios:
+        # Clip to [0.1, 10] to keep degenerate ratios from dominating the axis.
+        clipped = np.clip(aspect_ratios, 0.1, 10.0)
+        log_ratios = np.log10(clipped)
+        ax.hist(log_ratios, bins=40, color="blue", alpha=0.5)
+        # Reference lines at 1:2, 1:1, 2:1.
+        for ref_ratio, label in [(0.5, "1:2"), (1.0, "1:1"), (2.0, "2:1")]:
+            ax.axvline(
+                x=np.log10(ref_ratio),
+                color="gray",
+                linestyle=":",
+                alpha=0.7,
+            )
+            ax.text(
+                np.log10(ref_ratio),
+                ax.get_ylim()[1] * 0.95,
+                label,
+                rotation=90,
+                verticalalignment="top",
+                horizontalalignment="right",
+                color="gray",
+                fontsize=8,
+            )
+        # Tick labels show real ratios, not log values.
+        ticks = [0.1, 0.25, 0.5, 1.0, 2.0, 4.0, 10.0]
+        ax.set_xticks(np.log10(ticks))
+        ax.set_xticklabels([f"{t:g}" for t in ticks])
+
+    ax.set_xlabel("Width / Height")
+    ax.set_ylabel("Number of Objects")
+    ax.set_title("Aspect Ratio Distribution (log scale)")
+
     plt.savefig(output_file)
     plt.close(fig)

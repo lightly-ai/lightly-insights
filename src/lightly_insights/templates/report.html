@@ -57,6 +57,105 @@
     <div id="section-grid-layout" class="my-5">
       <h1 class="mb-4">Lightly Insights</h1>
 
+      {% if training_advice %}
+      <div class="card border-info mb-4">
+        <h5 class="card-header bg-info text-white">Training-readiness advice</h5>
+        <div class="card-body p-0">
+          <table class="table table-sm mb-0">
+            <thead>
+              <tr>
+                <th scope="col" style="width: 8em">Category</th>
+                <th scope="col" style="width: 6em">Severity</th>
+                <th scope="col">Finding</th>
+                <th scope="col">Suggestion</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for a in training_advice %}
+              <tr>
+                <td>{{ a.category }}</td>
+                <td>
+                  {% if a.severity == "critical" %}
+                  <span class="badge bg-danger">critical</span>
+                  {% elif a.severity == "warning" %}
+                  <span class="badge bg-warning text-dark">warning</span>
+                  {% else %}
+                  <span class="badge bg-secondary">info</span>
+                  {% endif %}
+                </td>
+                <td class="small">{{ a.finding }}</td>
+                <td class="small">{{ a.suggestion }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {% endif %}
+
+      {% if health_score.subscores %}
+      <div class="card border-primary mb-4">
+        <div class="card-body">
+          <div class="row align-items-center">
+            <div class="col-md-3 text-center border-end">
+              <div class="text-secondary small text-uppercase">Dataset health</div>
+              {% if health_score.overall is not none %}
+              <div style="font-size: 3.5rem; font-weight: 600; line-height: 1;">
+                {{ "{0:.0f}".format(health_score.overall) }}
+                <span class="text-muted" style="font-size: 1.2rem;">/ 100</span>
+              </div>
+              <div class="h4 mb-0">Grade {{ health_score.grade }}</div>
+              {% else %}
+              <div class="text-muted">Not enough label data<br>to compute an overall score.</div>
+              {% endif %}
+            </div>
+            <div class="col-md-9">
+              <div class="row">
+                {% for sub in health_score.subscores %}
+                <div class="col-md-6 mb-2">
+                  <div class="d-flex justify-content-between">
+                    <strong>{{ sub.name }}</strong>
+                    {% if sub.score >= 0 %}
+                    <span>
+                      <span class="badge bg-secondary">{{ sub.grade }}</span>
+                      {{ "{0:.0f}".format(sub.score) }}
+                    </span>
+                    {% else %}
+                    <span class="text-muted">—</span>
+                    {% endif %}
+                  </div>
+                  <div class="text-muted small">{{ sub.detail }}</div>
+                  {% if sub.score >= 0 %}
+                  <div class="progress" style="height: 4px;">
+                    <div class="progress-bar
+                                {% if sub.score >= 80 %}bg-success
+                                {% elif sub.score >= 60 %}bg-warning
+                                {% else %}bg-danger{% endif %}"
+                         role="progressbar"
+                         style="width: {{ sub.score }}%;"
+                         aria-valuenow="{{ sub.score | round(0, 'floor') | int }}"
+                         aria-valuemin="0" aria-valuemax="100"></div>
+                  </div>
+                  {% endif %}
+                </div>
+                {% endfor %}
+              </div>
+              {% if health_score.issues %}
+              <div class="mt-2">
+                <div class="text-secondary small text-uppercase mb-1">Top issues to fix</div>
+                <ul class="mb-0 small">
+                  {% for issue in health_score.issues %}
+                  <li>{{ issue }}</li>
+                  {% endfor %}
+                </ul>
+              </div>
+              {% endif %}
+            </div>
+          </div>
+        </div>
+      </div>
+      {% endif %}
+
       <table class="table table-hover">
         <tbody>
           <tr>
@@ -81,7 +180,7 @@
           <div class="card text-white bg-primary">
             <!-- <div class="card-header">Header</div> -->
             <div class="card-body">
-              <h3 class="card-titl mb-3">{{ image_analysis.num_images }} Images</h4>
+              <h3 class="card-title mb-3">{{ image_analysis.num_images }} Images</h3>
 
                 <table class="table table-hover">
                   <tbody>
@@ -104,9 +203,14 @@
                     </tr>
                     <tr class="table-primary">
                       <th scope="row">Avg objects per image</th>
-                      <td>{{ "{0:.1f}".format(object_detection_analysis.total.num_objects / image_analysis.num_images)
-                        }}</td>
+                      <td>{{ "{0:.1f}".format(object_detection_insights.avg_objects_per_image) }}</td>
                     </tr>
+                    {% if image_analysis.corrupt_files|length > 0 %}
+                    <tr class="table-primary">
+                      <th scope="row">Corrupt / unreadable images</th>
+                      <td>{{ image_analysis.corrupt_files|length }}</td>
+                    </tr>
+                    {% endif %}
                   </tbody>
                 </table>
 
@@ -121,7 +225,7 @@
           <div class="card text-white bg-secondary">
             <!-- <div class="card-header">Header</div> -->
             <div class="card-body">
-              <h3 class="card-title mb-3">{{ object_detection_analysis.total.num_objects }} Objects</h4>
+              <h3 class="card-title mb-3">{{ object_detection_analysis.total.num_objects }} Objects</h3>
 
                 <table class="table table-hover">
                   <tbody>
@@ -131,12 +235,11 @@
                     </tr>
                     <tr class="table-secondary">
                       <th scope="row">Avg objects per class</th>
-                      <td>{{ "{0:.1f}".format(object_detection_analysis.total.num_objects /
-                        object_detection_insights.num_classes) }}</td>
+                      <td>{{ "{0:.1f}".format(object_detection_insights.avg_objects_per_class) }}</td>
                     </tr>
                     <tr class="table-secondary">
                       <th scope="row">Avg images per class</th>
-                      <td>{{ "{0:.1f}".format(image_analysis.num_images / object_detection_insights.num_classes) }}</td>
+                      <td>{{ "{0:.1f}".format(object_detection_insights.avg_images_per_class) }}</td>
                     </tr>
                     <tr class="table-secondary">
                       <th scope="row">Avg size</th>
@@ -171,6 +274,9 @@
           <div class="square-box">
             <img src="{{ sample_image.path }}" class="img-fluid rounded" alt="{{ sample_image.filename }}">
           </div>
+          {% if sample_image.label %}
+          <p class="text-center small text-muted mt-1 mb-0">{{ sample_image.label }}</p>
+          {% endif %}
         </div>
         {% endfor %}
       </div>
@@ -218,6 +324,111 @@
 
     </div>
 
+    {% if image_analysis.quality_flags
+          and (image_analysis.quality_flags.uniform_files
+               or image_analysis.quality_flags.blurry_files
+               or image_analysis.quality_flags.extreme_aspect_files
+               or image_analysis.quality_flags.mode_counts|length > 1
+               or image_analysis.corrupt_files
+               or image_analysis.near_duplicate_groups) %}
+    <!-- Image Quality Red Flags -->
+
+    <div id="section-grid-layout" class="my-5">
+      <div class="card border-warning">
+        <h4 class="card-header">Image Quality Red Flags</h4>
+        <div class="card-body">
+          <p class="text-muted small">
+            Sampled {{ image_analysis.quality_flags.sample_size }} of
+            {{ image_analysis.num_images }} images for luminance and blur checks.
+          </p>
+          <div class="row">
+            {% if image_analysis.corrupt_files %}
+            <div class="col-md-6 mb-3">
+              <strong>{{ image_analysis.corrupt_files|length }} corrupt / unreadable</strong>
+              <ul class="small mb-0">
+                {% for name in image_analysis.corrupt_files[:5] %}
+                <li><code>{{ name }}</code></li>
+                {% endfor %}
+                {% if image_analysis.corrupt_files|length > 5 %}
+                <li class="text-muted">… and {{ image_analysis.corrupt_files|length - 5 }} more</li>
+                {% endif %}
+              </ul>
+            </div>
+            {% endif %}
+            {% if image_analysis.quality_flags.uniform_files %}
+            <div class="col-md-6 mb-3">
+              <strong>{{ image_analysis.quality_flags.uniform_files|length }} uniform (all-black / all-white)</strong>
+              <ul class="small mb-0">
+                {% for name in image_analysis.quality_flags.uniform_files[:5] %}
+                <li><code>{{ name }}</code></li>
+                {% endfor %}
+                {% if image_analysis.quality_flags.uniform_files|length > 5 %}
+                <li class="text-muted">… and {{ image_analysis.quality_flags.uniform_files|length - 5 }} more</li>
+                {% endif %}
+              </ul>
+            </div>
+            {% endif %}
+            {% if image_analysis.quality_flags.blurry_files %}
+            <div class="col-md-6 mb-3">
+              <strong>{{ image_analysis.quality_flags.blurry_files|length }} likely blurry</strong>
+              <ul class="small mb-0">
+                {% for name in image_analysis.quality_flags.blurry_files[:5] %}
+                <li><code>{{ name }}</code></li>
+                {% endfor %}
+                {% if image_analysis.quality_flags.blurry_files|length > 5 %}
+                <li class="text-muted">… and {{ image_analysis.quality_flags.blurry_files|length - 5 }} more</li>
+                {% endif %}
+              </ul>
+            </div>
+            {% endif %}
+            {% if image_analysis.quality_flags.extreme_aspect_files %}
+            <div class="col-md-6 mb-3">
+              <strong>{{ image_analysis.quality_flags.extreme_aspect_files|length }} extreme aspect ratio (&gt; 5:1 or &lt; 1:5)</strong>
+              <ul class="small mb-0">
+                {% for name in image_analysis.quality_flags.extreme_aspect_files[:5] %}
+                <li><code>{{ name }}</code></li>
+                {% endfor %}
+                {% if image_analysis.quality_flags.extreme_aspect_files|length > 5 %}
+                <li class="text-muted">… and {{ image_analysis.quality_flags.extreme_aspect_files|length - 5 }} more</li>
+                {% endif %}
+              </ul>
+            </div>
+            {% endif %}
+            {% if image_analysis.quality_flags.mode_counts|length > 1 %}
+            <div class="col-md-6 mb-3">
+              <strong>Mixed image modes</strong>
+              <p class="small mb-1 text-muted">
+                Detectors often choke on mixed-channel inputs. Convert to a single mode before training.
+              </p>
+              <ul class="small mb-0">
+                {% for mode, count in image_analysis.quality_flags.mode_counts.most_common() %}
+                <li><code>{{ mode }}</code>: {{ count }} image(s)</li>
+                {% endfor %}
+              </ul>
+            </div>
+            {% endif %}
+            {% if image_analysis.near_duplicate_groups %}
+            <div class="col-12 mb-3">
+              <strong>{{ image_analysis.near_duplicate_groups|length }} near-duplicate groups</strong>
+              <ul class="small mb-0">
+                {% for group in image_analysis.near_duplicate_groups[:5] %}
+                <li>
+                  {{ group|length }} images:
+                  {% for name in group[:3] %}<code>{{ name }}</code>{% if not loop.last %}, {% endif %}{% endfor %}{% if group|length > 3 %}, …{% endif %}
+                </li>
+                {% endfor %}
+                {% if image_analysis.near_duplicate_groups|length > 5 %}
+                <li class="text-muted">… and {{ image_analysis.near_duplicate_groups|length - 5 }} more groups</li>
+                {% endif %}
+              </ul>
+            </div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
     <!-- Object Detection Insights -->
 
     <div id="section-grid-layout" class="my-5">
@@ -245,10 +456,173 @@
 
           </div>
 
+          {% if object_detection_insights.num_classes > 1 %}
+          <!-- Class imbalance summary -->
+          <div class="row mt-3 mb-3">
+            <div class="col-lg-3 col-md-6 mb-2">
+              <div class="card h-100 border-primary">
+                <div class="card-body p-2">
+                  <div class="text-secondary small">Balance (normalized entropy)</div>
+                  <div class="h5 mb-0">{{ "{0:.2f}".format(object_detection_insights.imbalance.normalized_entropy) }}</div>
+                  <div class="text-muted small">1.00 = perfectly balanced</div>
+                </div>
+              </div>
+            </div>
+            <div class="col-lg-3 col-md-6 mb-2">
+              <div class="card h-100 border-primary">
+                <div class="card-body p-2">
+                  <div class="text-secondary small">Gini coefficient</div>
+                  <div class="h5 mb-0">{{ "{0:.2f}".format(object_detection_insights.imbalance.gini) }}</div>
+                  <div class="text-muted small">0.00 = perfectly balanced</div>
+                </div>
+              </div>
+            </div>
+            <div class="col-lg-3 col-md-6 mb-2">
+              <div class="card h-100 border-primary">
+                <div class="card-body p-2">
+                  <div class="text-secondary small">Top class share</div>
+                  <div class="h5 mb-0">{{ "{0:.0f}".format(100 * object_detection_insights.imbalance.top_class_share) }} %</div>
+                  <div class="text-muted small">of all objects</div>
+                </div>
+              </div>
+            </div>
+            <div class="col-lg-3 col-md-6 mb-2">
+              <div class="card h-100 border-primary">
+                <div class="card-body p-2">
+                  <div class="text-secondary small">Under-represented classes</div>
+                  <div class="h5 mb-0">{{ object_detection_insights.imbalance.under_represented_count }}</div>
+                  <div class="text-muted small">&lt; 1 % of objects</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          {% endif %}
+
+          {% if object_detection_analysis.total.tiny_object_count > 0
+             or object_detection_analysis.total.huge_object_count > 0
+             or object_detection_analysis.total.edge_touching_count > 0
+             or object_detection_analysis.duplicate_annotations|length > 0
+             or object_detection_analysis.class_conflicts|length > 0 %}
+          <div class="alert alert-warning" role="alert">
+            <strong>Quality flags</strong>
+            <ul class="mb-0">
+              {% if object_detection_analysis.total.tiny_object_count > 0 %}
+              <li>{{ object_detection_analysis.total.tiny_object_count }} tiny objects (&lt; 0.5 % of image area) — may be below detector stride</li>
+              {% endif %}
+              {% if object_detection_analysis.total.huge_object_count > 0 %}
+              <li>{{ object_detection_analysis.total.huge_object_count }} huge objects (&gt; 50 % of image area) — check for mislabeled full-image boxes</li>
+              {% endif %}
+              {% if object_detection_analysis.total.edge_touching_count > 0 %}
+              <li>{{ object_detection_analysis.total.edge_touching_count }} edge-touching objects — truncated boxes are harder to learn</li>
+              {% endif %}
+              {% if object_detection_analysis.duplicate_annotations|length > 0 %}
+              <li>{{ object_detection_analysis.duplicate_annotations|length }} suspected duplicate annotations (same class, IoU &ge; 0.9)</li>
+              {% endif %}
+              {% if object_detection_analysis.class_conflicts|length > 0 %}
+              <li>
+                {{ object_detection_analysis.class_conflicts|length }}
+                class-conflict pairs (different classes, IoU &ge; 0.5) — often indicates a mislabel. Examples:
+                <ul class="small mb-0">
+                  {% for pair in object_detection_analysis.class_conflicts[:3] %}
+                  <li><code>{{ pair.filename }}</code>:
+                      <em>{{ pair.category_a }}</em> vs
+                      <em>{{ pair.category_b }}</em>
+                      (IoU = {{ "{0:.2f}".format(pair.iou) }})</li>
+                  {% endfor %}
+                  {% if object_detection_analysis.class_conflicts|length > 3 %}
+                  <li class="text-muted">… and {{ object_detection_analysis.class_conflicts|length - 3 }} more</li>
+                  {% endif %}
+                </ul>
+              </li>
+              {% endif %}
+            </ul>
+          </div>
+          {% endif %}
+
+          {% if drilldown_galleries %}
+          <div class="mt-3">
+            <h5>Problematic annotations — drill-down</h5>
+            {% for gallery in drilldown_galleries %}
+            <div class="mt-3">
+              <strong>{{ gallery.title }}</strong>
+              <p class="small text-muted mb-2">{{ gallery.description }}</p>
+              <div class="row">
+                {% for thumb in gallery.thumbs %}
+                <div class="col-md-4 col-sm-6 mb-3">
+                  <img src="{{ thumb.src }}" class="img-fluid rounded border" alt="{{ thumb.filename }}">
+                  <div class="small"><code>{{ thumb.filename }}</code></div>
+                  <div class="small text-muted">{{ thumb.caption }}</div>
+                </div>
+                {% endfor %}
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+          {% endif %}
+
+          {% if object_detection_analysis.recommended_anchors|length > 0 %}
+          <div class="mt-3">
+            <h5>Recommended anchor sizes</h5>
+            <p class="text-muted small">
+              k-means clustering (k = {{ object_detection_analysis.recommended_anchors|length }}) over all object
+              widths × heights. Usable as anchor priors for YOLO / SSD-style detectors.
+            </p>
+            <div class="table-responsive">
+              <table class="table table-sm table-hover mb-0">
+                <thead>
+                  <tr>
+                    <th scope="col">#</th>
+                    <th scope="col">Width × Height (px)</th>
+                    <th scope="col">Aspect ratio</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for anchor in object_detection_analysis.recommended_anchors %}
+                  <tr>
+                    <td>{{ loop.index }}</td>
+                    <td>{{ "{0:.0f}".format(anchor[0]) }} × {{ "{0:.0f}".format(anchor[1]) }}</td>
+                    <td>{{ "{0:.2f}".format(anchor[0] / anchor[1]) if anchor[1] > 0 else "-" }}</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
+          </div>
+          {% endif %}
 
           {% with plots=object_detection_insights.plots %}
           {% include 'plots.html' %}
           {% endwith %}
+
+          {% if object_detection_insights.cooccurrence_plot %}
+          <div class="row mt-3">
+            <div class="col-lg-8 offset-lg-2">
+              <img src="{{ object_detection_insights.cooccurrence_plot }}"
+                   class="img-fluid" alt="Class Co-occurrence">
+            </div>
+          </div>
+          {% endif %}
+
+          <div class="row mt-3">
+            {% if object_detection_insights.aspect_overlay_plot %}
+            <div class="col-lg-6">
+              <img src="{{ object_detection_insights.aspect_overlay_plot }}"
+                   class="img-fluid" alt="Per-class aspect overlay">
+            </div>
+            {% endif %}
+            {% if object_detection_insights.heatmap_overlay_plot %}
+            <div class="col-lg-6">
+              <img src="{{ object_detection_insights.heatmap_overlay_plot }}"
+                   class="img-fluid" alt="Heatmap overlay on sample">
+            </div>
+            {% endif %}
+            {% if object_detection_insights.count_vs_size_plot %}
+            <div class="col-lg-6">
+              <img src="{{ object_detection_insights.count_vs_size_plot }}"
+                   class="img-fluid" alt="Objects per image vs. image size">
+            </div>
+            {% endif %}
+          </div>
 
           <table class="table table-sm table-hover">
             <thead>
@@ -261,14 +635,16 @@
             <tbody>
               {% for class_id in object_detection_insights.class_ids_most_common %}
               {% set class = object_detection_analysis.classes[class_id] %}
+              {% set total_objects = object_detection_analysis.total.num_objects %}
+              {% set pct = (class.num_objects / total_objects * 100) if total_objects else 0 %}
               <tr>
                 <td class="col-3">{{ class.class_name }}</td>
                 <td class="col-1">{{ class.num_objects }}</td>
                 <td class="col-8">
                   <div class="progress mt-1">
                     <div class="progress-bar" role="progressbar"
-                      style="width: {{ class.num_objects / object_detection_analysis.total.num_objects * 100 }}%;"
-                      aria-valuenow="25" aria-valuemin="0" aria-valuemax="100"></div>
+                      style="width: {{ pct }}%;"
+                      aria-valuenow="{{ pct | round(0, 'floor') | int }}" aria-valuemin="0" aria-valuemax="100"></div>
                   </div>
                 </td>
               </tr>
@@ -294,7 +670,8 @@
             {% for class_id in object_detection_insights.class_ids_most_common %}
             {% set class = object_detection_analysis.classes[class_id] %}
             <li class="nav-item" role="presentation">
-              <a class="btn btn-outline-primary btn-sm m-1" data-bs-toggle="tab" data-bs-target="#c{{ class.class_id }}"
+              <a class="btn btn-outline-primary btn-sm m-1{% if loop.first %} active{% endif %}"
+                data-bs-toggle="tab" data-bs-target="#c{{ class.class_id }}"
                 href="#c{{ class.class_id }}">
                 {{ class.class_name }}&nbsp;&nbsp;<span class="badge bg-light rounded-pill">{{ class.num_objects
                   }}</span>
@@ -309,7 +686,7 @@
 
             {% for class_id in object_detection_insights.class_ids_most_common %}
             {% set class = object_detection_analysis.classes[class_id] %}
-            <div class="tab-pane fade" id="c{{ class_id }}" role="tabpanel">
+            <div class="tab-pane fade{% if loop.first %} show active{% endif %}" id="c{{ class_id }}" role="tabpanel">
               <h4>{{ class.num_objects }} Objects of Class "{{ class.class_name }}"</h4>
 
               {% if class.num_objects > 0 %}
@@ -325,6 +702,24 @@
                       <th scope="row">Avg area</th>
                       <td>{{ "{0:.0f}".format(100 * class.avg_rel_area) }} %</td>
                     </tr>
+                    {% if class.tiny_object_count > 0 %}
+                    <tr>
+                      <th scope="row">Tiny objects (&lt; 0.5 % area)</th>
+                      <td>{{ class.tiny_object_count }}</td>
+                    </tr>
+                    {% endif %}
+                    {% if class.huge_object_count > 0 %}
+                    <tr>
+                      <th scope="row">Huge objects (&gt; 50 % area)</th>
+                      <td>{{ class.huge_object_count }}</td>
+                    </tr>
+                    {% endif %}
+                    {% if class.edge_touching_count > 0 %}
+                    <tr>
+                      <th scope="row">Edge-touching objects</th>
+                      <td>{{ class.edge_touching_count }}</td>
+                    </tr>
+                    {% endif %}
                   </tbody>
                 </table>
               </div>
