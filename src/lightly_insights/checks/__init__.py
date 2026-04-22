@@ -6,12 +6,18 @@ up in ``list_checks()`` and be picked up by ``run_all``.
 """
 # Side-effect imports register checks with the global registry.
 from lightly_insights.checks import (  # noqa: F401
+    background_scarcity,
     class_conflict,
     corrupt_images,
     duplicate_annotation,
+    geometric_validity,
     mask_fragmentation,
     polygon_axis_aligned,
+    polygon_mask_consistency,
     polygon_self_intersect,
+    same_class_overlap,
     shape_outlier,
+    split_leakage,
+    split_purity,
     starved_class,
 )
