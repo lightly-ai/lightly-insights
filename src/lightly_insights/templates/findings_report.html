@@ -303,10 +303,14 @@
   {% endfor %}
 
   {% if drilldown_panels %}
-  <h3 class="mt-5">Drill-down (top {{ drilldown_panels|length }})</h3>
+  <h3 class="mt-5">Drill-down</h3>
   <p class="text-muted small">
-    Each row in the priority review queue links here. Red = the flagged
-    annotation. Green = a typical annotation of the same class for comparison.
+    {{ drilldown_panels|length }} panel(s) rendered for the top
+    {{ review_queue|length }} review-queue items. Dataset-level findings
+    (e.g. "class X is starved", "few backgrounds") don't have a
+    specific annotation to draw and are skipped here — their details
+    remain in the findings list below. Red = the flagged annotation;
+    green = a typical annotation of the same class.
   </p>
   <div>
     {% for panel in drilldown_panels %}
