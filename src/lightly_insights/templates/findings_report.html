@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="./static/cdn.jsdelivr.net_npm_bootswatch@5_dist_flatly_bootstrap.min.css">
+  <link rel="icon" type="image/x-icon" href="./static/favicon.png">
+  <title>Lightly Insights — Findings</title>
+  <style>
+    body { padding-bottom: 4rem; }
+    .severity-10, .severity-11, .severity-12, .severity-13, .severity-14, .severity-15 { color: #c0392b; font-weight: 600; }
+    .severity-30, .severity-31, .severity-32 { color: #e67e22; font-weight: 600; }
+    .severity-50, .severity-51, .severity-52 { color: #f1c40f; font-weight: 600; }
+    .severity-70, .severity-90 { color: #7f8c8d; }
+    code.fn { font-size: 0.85em; color: #34495e; }
+    .queue-row td { vertical-align: middle; }
+    details summary { cursor: pointer; font-weight: 600; padding: 0.5rem 0; }
+    details summary:hover { color: #2980b9; }
+  </style>
+</head>
+<body>
+<div class="container my-5">
+
+  <h1 class="mb-3">Dataset Findings</h1>
+  <p class="text-secondary">
+    Generated {{ date_generated }} · {{ dataset.num_images }} images ·
+    {{ dataset.num_annotations }} annotations · {{ dataset.num_classes }} classes ·
+    sources: {{ sources_joined }}
+  </p>
+
+  <!-- Summary strip -->
+  <div class="row mb-4">
+    <div class="col-md-3">
+      <div class="card">
+        <div class="card-body text-center">
+          <div class="text-secondary small text-uppercase">Total findings</div>
+          <div class="h2 mb-0">{{ findings|length }}</div>
+        </div>
+      </div>
+    </div>
+    {% for sev_label, count, color in severity_buckets %}
+    <div class="col-md-2">
+      <div class="card">
+        <div class="card-body text-center">
+          <div class="text-secondary small text-uppercase">{{ sev_label }}</div>
+          <div class="h3 mb-0" style="color: {{ color }};">{{ count }}</div>
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+    <div class="col-md-3">
+      <div class="card bg-primary text-white">
+        <div class="card-body text-center">
+          <div class="small text-uppercase">Review queue</div>
+          <div class="h2 mb-0">{{ review_queue|length }}</div>
+          <div class="small">
+            {% if review_queue_path %}
+            <a href="{{ review_queue_path }}" class="text-white">Download CSV</a>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Priority review queue -->
+  {% if review_queue %}
+  <h3 class="mt-4">Priority review queue</h3>
+  <p class="text-muted small">
+    Top {{ review_queue|length }} items ranked by severity × uncertainty.
+    Start here.
+  </p>
+  <div class="table-responsive">
+    <table class="table table-sm table-hover">
+      <thead>
+        <tr>
+          <th style="width: 3em">#</th>
+          <th>Finding</th>
+          <th style="width: 20em">File</th>
+          <th style="width: 6em">Conf.</th>
+          <th>Suggested action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in review_queue %}
+        <tr class="queue-row">
+          <td class="text-muted">{{ item.rank }}</td>
+          <td>
+            <span class="severity-{{ item.severity }}">{{ item.title }}</span>
+            <div class="small text-muted">{{ item.finding_id }}</div>
+          </td>
+          <td>
+            {% if item.filename %}<code class="fn">{{ item.filename }}</code>{% else %}<span class="text-muted">—</span>{% endif %}
+            {% if item.annotation_id is not none %}<div class="small text-muted">ann_id {{ item.annotation_id }}</div>{% endif %}
+          </td>
+          <td>
+            {% if item.confidence is not none %}{{ "%.2f"|format(item.confidence) }}{% else %}<span class="text-muted">—</span>{% endif %}
+          </td>
+          <td class="small">{{ item.action }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <!-- Findings grouped by category -->
+  <h3 class="mt-5">All findings by category</h3>
+  {% for category, group in findings_by_category %}
+  <details {% if loop.first %}open{% endif %} class="mt-2">
+    <summary>
+      {{ category|capitalize }} <span class="text-muted">({{ group|length }})</span>
+    </summary>
+    <div class="table-responsive mt-2">
+      <table class="table table-sm">
+        <thead>
+          <tr>
+            <th>Finding</th>
+            <th>Detail</th>
+            <th style="width: 10em">Severity</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for f in group %}
+          <tr>
+            <td>
+              <strong>{{ f.title }}</strong>
+              <div class="small text-muted">{{ f.check_id }}</div>
+              {% if f.affected_images %}
+              <div class="small">
+                {% for name in f.affected_images[:3] %}<code class="fn">{{ name }}</code>{% if not loop.last %}, {% endif %}{% endfor %}
+                {% if f.affected_images|length > 3 %}<span class="text-muted">+{{ f.affected_images|length - 3 }} more</span>{% endif %}
+              </div>
+              {% endif %}
+            </td>
+            <td class="small">
+              {{ f.detail }}
+              <div class="text-muted mt-1"><em>Action:</em> {{ f.action }}</div>
+            </td>
+            <td><span class="severity-{{ f.severity }}">{{ f.severity }}</span></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </details>
+  {% endfor %}
+
+  <p class="mt-5 text-center text-muted small">
+    Generated with <a href="https://github.com/lightly-ai/lightly-insights">Lightly Insights</a>.
+  </p>
+</div>
+</body>
+</html>
