@@ -309,3 +309,157 @@ def test_imbalance_single_class() -> None:
     assert stats.normalized_entropy == 0.0
     assert abs(stats.top_class_share - 1.0) < 1e-9
     assert stats.gini == 0.0
+
+
+# ==== Phase 3 ====
+
+
+# ---- 3.5 co-occurrence matrix ----
+
+def test_cooccurrence_matrix_counts_joint_images() -> None:
+    cats = [
+        Category(id=0, name="a"),
+        Category(id=1, name="b"),
+        Category(id=2, name="c"),
+    ]
+    img = lambda i: Image(id=i, filename=f"img_{i}.jpg", width=100, height=100)  # noqa: E731
+    box = BoundingBox(xmin=0, ymin=0, xmax=10, ymax=10)
+
+    def obj(cat: Category) -> SingleObjectDetection:
+        return SingleObjectDetection(category=cat, box=box)
+
+    label_input = _FakeODInput(
+        categories=cats,
+        labels=[
+            ImageObjectDetection(image=img(0), objects=[obj(cats[0]), obj(cats[1])]),
+            ImageObjectDetection(image=img(1), objects=[obj(cats[0]), obj(cats[1])]),
+            ImageObjectDetection(image=img(2), objects=[obj(cats[1]), obj(cats[2])]),
+            ImageObjectDetection(image=img(3), objects=[obj(cats[0])]),
+        ],
+    )
+    result = analyze.analyze_object_detections(label_input)
+    m = result.cooccurrence_matrix
+    assert m is not None
+    # Diagonals: images containing each class.
+    # a appears in img 0,1,3 -> 3
+    # b appears in img 0,1,2 -> 3
+    # c appears in img 2      -> 1
+    assert m[0, 0] == 3
+    assert m[1, 1] == 3
+    assert m[2, 2] == 1
+    # Off-diagonal: a+b together in img 0,1 -> 2; b+c in img 2 -> 1; a+c none.
+    assert m[0, 1] == 2 and m[1, 0] == 2
+    assert m[1, 2] == 1 and m[2, 1] == 1
+    assert m[0, 2] == 0 and m[2, 0] == 0
+
+
+# ---- 2.8 curated sample grid ----
+
+def test_select_sample_images_handles_small_datasets(tmp_path: Path) -> None:
+    # 3 images: fewer than target_count=8, must not crash.
+    folder = _make_image_folder(tmp_path, [(100, 100), (200, 200), (300, 300)])
+    image_analysis = analyze.analyze_images(folder)
+    # Build a trivial empty OD analysis.
+    empty_od = analyze.ObjectDetectionAnalysis(
+        num_images=0,
+        num_images_zero_objects=0,
+        filename_set=set(),
+        total=analyze.ClassAnalysis.create_empty(id=-1, name="[All classes]"),
+        classes={},
+    )
+    picks = present._select_sample_images(
+        image_analysis=image_analysis, od_analysis=empty_od
+    )
+    # Should return at most 3 samples, all unique, no crash.
+    assert len(picks) <= 3
+    assert len(set(p.filename for p in picks)) == len(picks)
+
+
+def test_select_sample_images_curates_edge_cases(tmp_path: Path) -> None:
+    folder = _make_image_folder(tmp_path, [(50, 50), (400, 400), (2000, 2000)])
+    image_analysis = analyze.analyze_images(folder)
+    empty_od = analyze.ObjectDetectionAnalysis(
+        num_images=0,
+        num_images_zero_objects=0,
+        filename_set=set(),
+        total=analyze.ClassAnalysis.create_empty(id=-1, name="[All classes]"),
+        classes={},
+    )
+    picks = present._select_sample_images(
+        image_analysis=image_analysis, od_analysis=empty_od
+    )
+    labels = {p.label for p in picks}
+    # Smallest + largest should both be represented.
+    assert "smallest" in labels
+    assert "largest" in labels
+
+
+# ---- 2.2 recursive listing ----
+
+def test_recursive_listing_traverses_subdirs(tmp_path: Path) -> None:
+    (tmp_path / "train").mkdir()
+    (tmp_path / "val").mkdir()
+    PILImage.new("RGB", (100, 100)).save(tmp_path / "train" / "a.jpg")
+    PILImage.new("RGB", (100, 100)).save(tmp_path / "val" / "b.jpg")
+    # A top-level scan finds nothing (no images at the root).
+    flat = analyze.analyze_images(tmp_path, recursive=False)
+    assert flat.num_images == 0
+    # Recursive pass finds both.
+    deep = analyze.analyze_images(tmp_path, recursive=True)
+    assert deep.num_images == 2
+    # Filenames keep the subdir prefix so sub/a.jpg and sub2/a.jpg wouldn't collide.
+    assert "train/a.jpg" in deep.filename_set
+    assert "val/b.jpg" in deep.filename_set
+
+
+# ---- 3.8 quality red flags ----
+
+def test_quality_flags_detect_uniform_image(tmp_path: Path) -> None:
+    folder = tmp_path / "imgs"
+    folder.mkdir()
+    # All-black uniform image.
+    PILImage.new("RGB", (200, 200), color=(0, 0, 0)).save(folder / "black.png")
+    # Normal content image with varying pixels.
+    import numpy as np
+    arr = (np.random.RandomState(0).rand(200, 200, 3) * 255).astype("uint8")
+    PILImage.fromarray(arr).save(folder / "noisy.png")
+    # Extreme aspect ratio.
+    PILImage.new("RGB", (2000, 100), color=(128, 128, 128)).save(folder / "wide.png")
+
+    result = analyze.analyze_images(folder, check_quality=True)
+    flags = result.quality_flags
+    assert flags is not None
+    assert "black.png" in flags.uniform_files
+    assert "wide.png" in flags.extreme_aspect_files
+
+
+def test_quality_flags_skipped_when_disabled(tmp_path: Path) -> None:
+    folder = _make_image_folder(tmp_path, [(100, 100)])
+    result = analyze.analyze_images(folder, check_quality=False)
+    assert result.quality_flags is None
+
+
+# ---- 3.7 near-duplicate detection gracefully no-ops without imagehash ----
+
+def test_near_duplicates_empty_when_disabled(tmp_path: Path) -> None:
+    folder = _make_image_folder(tmp_path, [(100, 100), (200, 200)])
+    result = analyze.analyze_images(folder, find_near_duplicates=False)
+    assert result.near_duplicate_groups == []
+
+
+# ---- 4.3 CLI wrapper ----
+
+def test_cli_images_only(tmp_path: Path) -> None:
+    from lightly_insights import __main__ as cli
+
+    # Need at least 1 image so analyze_images has work.
+    img_folder = _make_image_folder(tmp_path, [(100, 100), (200, 200)])
+    out = tmp_path / "report"
+    rc = cli.main([
+        "--images", str(img_folder),
+        "--out", str(out),
+        "--images-only",
+        "--no-quality-check",
+    ])
+    assert rc == 0
+    assert (out / "index.html").exists()

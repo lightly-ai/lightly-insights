@@ -27,6 +27,7 @@ template_folder = Path(__file__).parent / "templates"
 class SampleImage:
     filename: str
     path: Path
+    label: str = ""  # short tag explaining why it was picked (e.g. "smallest")
 
 
 @dataclass(frozen=True)
@@ -66,6 +67,7 @@ class ObjectDetectionInsights:
     avg_objects_per_class: float
     avg_images_per_class: float
     imbalance: ImbalanceStats
+    cooccurrence_plot: str = ""
 
 
 def create_html_report(
@@ -78,6 +80,7 @@ def create_html_report(
     image_insights = _get_image_insights(
         output_folder=output_folder,
         image_analysis=image_analysis,
+        od_analysis=od_analysis,
     )
     object_detection_insights = _get_object_detection_insights(
         output_folder=output_folder,
@@ -125,6 +128,7 @@ def create_html_report(
 def _get_image_insights(
     output_folder: Path,
     image_analysis: ImageAnalysis,
+    od_analysis: ObjectDetectionAnalysis,
 ) -> ImageInsights:
     # Image size plot.
     plots.width_heigth_pixels_plot(
@@ -133,25 +137,99 @@ def _get_image_insights(
         title="Image Sizes",
     )
 
-    # Sample images.
+    # Curated sample selection. We pick a mix of representative + edge cases
+    # so a dataset reviewer sees what they need to act on.
     sample_folder = output_folder / "sample"
     sample_folder.mkdir(parents=True, exist_ok=True)
-    sample_images = []
-    rng = random.Random(42)
-    selection = rng.sample(sorted(list(image_analysis.filename_set)), k=8)
-    for filename in selection:
-        shutil.copy2(
-            src=image_analysis.image_folder / filename, dst=sample_folder / filename
-        )
-        sample_images.append(
-            SampleImage(filename=filename, path=Path("./sample") / filename)
-        )
+    sample_images = _select_sample_images(
+        image_analysis=image_analysis, od_analysis=od_analysis
+    )
+    for sample in sample_images:
+        src = image_analysis.image_folder / sample.filename
+        dst = sample_folder / sample.filename
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if src.exists() and not dst.exists():
+            shutil.copy2(src=src, dst=dst)
 
     return ImageInsights(
         image_sizes_most_common=list(image_analysis.image_sizes.most_common()),
         image_size_plot="image_size_plot.png",
         sample_images=sample_images,
     )
+
+
+def _select_sample_images(
+    image_analysis: ImageAnalysis,
+    od_analysis: ObjectDetectionAnalysis,
+    target_count: int = 8,
+) -> List[SampleImage]:
+    """Curated sample: mix of random + edge cases.
+
+    Falls back gracefully to random-only when metadata is missing (e.g. an
+    image had no label, so we don't know its object count).
+    """
+    filenames = sorted(image_analysis.filename_set)
+    if not filenames:
+        return []
+
+    rng = random.Random(42)
+    picks: List[Tuple[str, str]] = []  # (filename, label)
+    seen: Set[str] = set()
+
+    def add(filename: str, label: str) -> None:
+        if filename and filename not in seen and filename in image_analysis.filename_set:
+            seen.add(filename)
+            picks.append((filename, label))
+
+    # 1. Smallest and largest by pixel count; also extreme aspect ratios.
+    if image_analysis.filename_to_size:
+        by_pixels = sorted(
+            image_analysis.filename_to_size.items(), key=lambda kv: kv[1][0] * kv[1][1]
+        )
+        add(by_pixels[0][0], "smallest")
+        add(by_pixels[-1][0], "largest")
+        widest = max(
+            image_analysis.filename_to_size.items(),
+            key=lambda kv: kv[1][0] / kv[1][1] if kv[1][1] else 0,
+        )
+        tallest = max(
+            image_analysis.filename_to_size.items(),
+            key=lambda kv: kv[1][1] / kv[1][0] if kv[1][0] else 0,
+        )
+        add(widest[0], "widest")
+        add(tallest[0], "tallest")
+
+    # 2. Most / zero objects (if label info is available).
+    if od_analysis.objects_per_filename:
+        by_count = sorted(
+            od_analysis.objects_per_filename.items(), key=lambda kv: kv[1]
+        )
+        if by_count:
+            add(by_count[-1][0], f"most objects ({by_count[-1][1]})")
+            if by_count[0][1] == 0:
+                add(by_count[0][0], "zero objects")
+
+    # 3. Most-classes-present.
+    if od_analysis.classes_per_filename:
+        by_cls = max(
+            od_analysis.classes_per_filename.items(), key=lambda kv: kv[1]
+        )
+        add(by_cls[0], f"most classes ({by_cls[1]})")
+
+    # 4. Random fill.
+    remaining = [f for f in filenames if f not in seen]
+    rng.shuffle(remaining)
+    for f in remaining:
+        if len(picks) >= target_count:
+            break
+        add(f, "random")
+
+    # If we still have fewer than target_count it's because the dataset is
+    # smaller than target_count — that's fine, return what we have.
+    return [
+        SampleImage(filename=f, path=Path("./sample") / f, label=lbl)
+        for f, lbl in picks[:target_count]
+    ]
 
 
 def _get_object_detection_insights(
@@ -214,6 +292,25 @@ def _get_object_detection_insights(
         [c.num_objects for c in od_analysis.classes.values()]
     )
 
+    # Co-occurrence plot. Only renders when there's at least 2 classes and
+    # at least one off-diagonal count (otherwise the chart is trivial).
+    cooccurrence_plot_rel = ""
+    if (
+        od_analysis.cooccurrence_matrix is not None
+        and od_analysis.cooccurrence_matrix.shape[0] > 1
+    ):
+        cooccurrence_path = output_folder / "cooccurrence.png"
+        class_names = [
+            od_analysis.classes[cid].class_name
+            for cid in od_analysis.cooccurrence_class_ids
+        ]
+        plots.cooccurrence_plot(
+            output_file=cooccurrence_path,
+            matrix=od_analysis.cooccurrence_matrix,
+            class_names=class_names,
+        )
+        cooccurrence_plot_rel = "cooccurrence.png"
+
     return ObjectDetectionInsights(
         num_classes=num_classes,
         class_ids_most_common=class_ids_most_common,
@@ -223,6 +320,7 @@ def _get_object_detection_insights(
         avg_objects_per_class=avg_objects_per_class,
         avg_images_per_class=avg_images_per_class,
         imbalance=imbalance,
+        cooccurrence_plot=cooccurrence_plot_rel,
     )
 
 

@@ -302,6 +302,42 @@ def _heatmap(
     plt.close(fig)
 
 
+def cooccurrence_plot(
+    output_file: Path,
+    matrix: NDArray[np.int_],
+    class_names: List[str],
+) -> None:
+    """Render a co-occurrence heatmap with class-name tick labels."""
+    fig = plt.figure(figsize=(8, 7))
+    ax = fig.add_subplot(111)
+
+    # Log-scale color so a few dominant pairs don't wash out the rest.
+    # +1 keeps zero-valued cells visible as the lightest shade.
+    display = np.log1p(matrix.astype(np.float64))
+    im = ax.imshow(display, cmap="Blues", interpolation="nearest")
+
+    # Annotate cells with the raw counts.
+    n = matrix.shape[0]
+    max_val = float(matrix.max()) if matrix.size else 0.0
+    for i in range(n):
+        for j in range(n):
+            val = int(matrix[i, j])
+            if val == 0:
+                continue
+            color = "white" if display[i, j] > np.log1p(max_val) * 0.5 else "black"
+            ax.text(j, i, str(val), ha="center", va="center", fontsize=7, color=color)
+
+    ax.set_xticks(range(n))
+    ax.set_yticks(range(n))
+    ax.set_xticklabels(class_names, rotation=45, ha="right", fontsize=8)
+    ax.set_yticklabels(class_names, fontsize=8)
+    ax.set_title("Class Co-occurrence (images containing both classes)")
+    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label="log(1 + count)")
+    fig.tight_layout()
+    plt.savefig(output_file)
+    plt.close(fig)
+
+
 def _aspect_ratio_plot(
     output_file: Path,
     aspect_ratios: List[float],

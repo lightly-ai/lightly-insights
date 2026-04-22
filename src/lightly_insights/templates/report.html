@@ -175,6 +175,9 @@
           <div class="square-box">
             <img src="{{ sample_image.path }}" class="img-fluid rounded" alt="{{ sample_image.filename }}">
           </div>
+          {% if sample_image.label %}
+          <p class="text-center small text-muted mt-1 mb-0">{{ sample_image.label }}</p>
+          {% endif %}
         </div>
         {% endfor %}
       </div>
@@ -221,6 +224,97 @@
       </div>
 
     </div>
+
+    {% if image_analysis.quality_flags
+          and (image_analysis.quality_flags.uniform_files
+               or image_analysis.quality_flags.blurry_files
+               or image_analysis.quality_flags.extreme_aspect_files
+               or image_analysis.corrupt_files
+               or image_analysis.near_duplicate_groups) %}
+    <!-- Image Quality Red Flags -->
+
+    <div id="section-grid-layout" class="my-5">
+      <div class="card border-warning">
+        <h4 class="card-header">Image Quality Red Flags</h4>
+        <div class="card-body">
+          <p class="text-muted small">
+            Sampled {{ image_analysis.quality_flags.sample_size }} of
+            {{ image_analysis.num_images }} images for luminance and blur checks.
+          </p>
+          <div class="row">
+            {% if image_analysis.corrupt_files %}
+            <div class="col-md-6 mb-3">
+              <strong>{{ image_analysis.corrupt_files|length }} corrupt / unreadable</strong>
+              <ul class="small mb-0">
+                {% for name in image_analysis.corrupt_files[:5] %}
+                <li><code>{{ name }}</code></li>
+                {% endfor %}
+                {% if image_analysis.corrupt_files|length > 5 %}
+                <li class="text-muted">… and {{ image_analysis.corrupt_files|length - 5 }} more</li>
+                {% endif %}
+              </ul>
+            </div>
+            {% endif %}
+            {% if image_analysis.quality_flags.uniform_files %}
+            <div class="col-md-6 mb-3">
+              <strong>{{ image_analysis.quality_flags.uniform_files|length }} uniform (all-black / all-white)</strong>
+              <ul class="small mb-0">
+                {% for name in image_analysis.quality_flags.uniform_files[:5] %}
+                <li><code>{{ name }}</code></li>
+                {% endfor %}
+                {% if image_analysis.quality_flags.uniform_files|length > 5 %}
+                <li class="text-muted">… and {{ image_analysis.quality_flags.uniform_files|length - 5 }} more</li>
+                {% endif %}
+              </ul>
+            </div>
+            {% endif %}
+            {% if image_analysis.quality_flags.blurry_files %}
+            <div class="col-md-6 mb-3">
+              <strong>{{ image_analysis.quality_flags.blurry_files|length }} likely blurry</strong>
+              <ul class="small mb-0">
+                {% for name in image_analysis.quality_flags.blurry_files[:5] %}
+                <li><code>{{ name }}</code></li>
+                {% endfor %}
+                {% if image_analysis.quality_flags.blurry_files|length > 5 %}
+                <li class="text-muted">… and {{ image_analysis.quality_flags.blurry_files|length - 5 }} more</li>
+                {% endif %}
+              </ul>
+            </div>
+            {% endif %}
+            {% if image_analysis.quality_flags.extreme_aspect_files %}
+            <div class="col-md-6 mb-3">
+              <strong>{{ image_analysis.quality_flags.extreme_aspect_files|length }} extreme aspect ratio (&gt; 5:1 or &lt; 1:5)</strong>
+              <ul class="small mb-0">
+                {% for name in image_analysis.quality_flags.extreme_aspect_files[:5] %}
+                <li><code>{{ name }}</code></li>
+                {% endfor %}
+                {% if image_analysis.quality_flags.extreme_aspect_files|length > 5 %}
+                <li class="text-muted">… and {{ image_analysis.quality_flags.extreme_aspect_files|length - 5 }} more</li>
+                {% endif %}
+              </ul>
+            </div>
+            {% endif %}
+            {% if image_analysis.near_duplicate_groups %}
+            <div class="col-12 mb-3">
+              <strong>{{ image_analysis.near_duplicate_groups|length }} near-duplicate groups</strong>
+              <ul class="small mb-0">
+                {% for group in image_analysis.near_duplicate_groups[:5] %}
+                <li>
+                  {{ group|length }} images:
+                  {% for name in group[:3] %}<code>{{ name }}</code>{% if not loop.last %}, {% endif %}{% endfor %}{% if group|length > 3 %}, …{% endif %}
+                </li>
+                {% endfor %}
+                {% if image_analysis.near_duplicate_groups|length > 5 %}
+                <li class="text-muted">… and {{ image_analysis.near_duplicate_groups|length - 5 }} more groups</li>
+                {% endif %}
+              </ul>
+            </div>
+            {% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
 
     <!-- Object Detection Insights -->
 
@@ -317,6 +411,15 @@
           {% with plots=object_detection_insights.plots %}
           {% include 'plots.html' %}
           {% endwith %}
+
+          {% if object_detection_insights.cooccurrence_plot %}
+          <div class="row mt-3">
+            <div class="col-lg-8 offset-lg-2">
+              <img src="{{ object_detection_insights.cooccurrence_plot }}"
+                   class="img-fluid" alt="Class Co-occurrence">
+            </div>
+          </div>
+          {% endif %}
 
           <table class="table table-sm table-hover">
             <thead>

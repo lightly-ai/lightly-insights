@@ -35,6 +35,22 @@ HUGE_OBJECT_REL_AREA = 0.5  # >50% of image area -> "huge"
 EDGE_TOUCH_PIXELS = 1.0  # boxes within this many pixels of any image edge
 DUPLICATE_IOU_THRESHOLD = 0.9  # boxes above this IoU are flagged as duplicates
 
+# Image-quality thresholds.
+UNIFORM_LUMINANCE_STD = 2.0  # lower than this -> all-black/all-white
+BLUR_LAPLACIAN_VAR = 50.0  # lower than this -> likely blurry
+EXTREME_ASPECT_RATIO = 5.0  # w/h > 5 or < 0.2 -> aspect outlier
+QUALITY_SAMPLE_CAP = 1000  # images we scan for luminance/blur
+
+
+@dataclass(frozen=True)
+class QualityFlags:
+    """Per-image quality red flags, sampled on large datasets."""
+
+    sample_size: int  # how many images were inspected
+    uniform_files: List[str] = field(default_factory=list)  # all-black/all-white
+    blurry_files: List[str] = field(default_factory=list)
+    extreme_aspect_files: List[str] = field(default_factory=list)
+
 
 @dataclass(frozen=True)
 class ImageAnalysis:
@@ -44,6 +60,11 @@ class ImageAnalysis:
     image_sizes: Counter[Tuple[int, int]]
     median_size: Tuple[int, int]
     corrupt_files: List[str] = field(default_factory=list)
+    filename_to_size: Dict[str, Tuple[int, int]] = field(default_factory=dict)
+    quality_flags: Optional[QualityFlags] = None
+    # Groups of files that hash to very-similar values (near-duplicates).
+    # Empty when imagehash is not installed.
+    near_duplicate_groups: List[List[str]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -116,6 +137,14 @@ class ObjectDetectionAnalysis:
     total: ClassAnalysis
     classes: Dict[int, ClassAnalysis]
     duplicate_annotations: List[DuplicatePair] = field(default_factory=list)
+    # Counts of images where classes[i] and classes[j] both appear. The
+    # `cooccurrence_class_ids` list defines the row/column order.
+    cooccurrence_matrix: Optional[NDArray[np.int_]] = None
+    cooccurrence_class_ids: List[int] = field(default_factory=list)
+    # Per-image filename -> number of objects. Used downstream for curated
+    # sample selection.
+    objects_per_filename: Dict[str, int] = field(default_factory=dict)
+    classes_per_filename: Dict[str, int] = field(default_factory=dict)
 
 
 def _read_image_size(
@@ -129,20 +158,184 @@ def _read_image_size(
         return image_path, None, str(exc)
 
 
-def analyze_images(image_folder: Path, max_workers: int = 16) -> ImageAnalysis:
+def _laplacian_variance(gray: NDArray[np.float_]) -> float:
+    """Variance of the Laplacian. Standard blur-detection proxy."""
+    # 3x3 Laplacian kernel applied via numpy. Avoids scipy dependency.
+    k = np.array([[0, 1, 0], [1, -4, 1], [0, 1, 0]], dtype=np.float64)
+    out = np.zeros_like(gray)
+    # Manual 2D convolution at interior pixels (edges stay 0 — good enough for variance).
+    out[1:-1, 1:-1] = (
+        k[1, 1] * gray[1:-1, 1:-1]
+        + k[0, 1] * gray[:-2, 1:-1]
+        + k[2, 1] * gray[2:, 1:-1]
+        + k[1, 0] * gray[1:-1, :-2]
+        + k[1, 2] * gray[1:-1, 2:]
+    )
+    return float(out.var())
+
+
+def _inspect_quality(
+    image_path: Path, rel_name: str
+) -> Tuple[str, bool, bool, bool]:
+    """Return quality signals for a single image.
+
+    Returns (rel_name, is_uniform, is_blurry, is_extreme_aspect).
+    """
+    try:
+        with Image.open(image_path) as img:
+            # Downsample first — blur metric + std are stable at small sizes
+            # and this keeps big images fast.
+            w, h = img.size
+            thumb = img.convert("L")
+            thumb.thumbnail((256, 256))
+            arr = np.asarray(thumb, dtype=np.float64)
+    except (UnidentifiedImageError, OSError):
+        return rel_name, False, False, False
+    is_uniform = bool(arr.std() < UNIFORM_LUMINANCE_STD) if arr.size else False
+    is_blurry = bool(_laplacian_variance(arr) < BLUR_LAPLACIAN_VAR)
+    ratio = (w / h) if h > 0 else 0
+    is_extreme_aspect = ratio > EXTREME_ASPECT_RATIO or (
+        ratio > 0 and ratio < 1 / EXTREME_ASPECT_RATIO
+    )
+    return rel_name, is_uniform, is_blurry, is_extreme_aspect
+
+
+def _compute_quality_flags(
+    paths_and_names: List[Tuple[Path, str]],
+    max_workers: int,
+    sample_cap: int = QUALITY_SAMPLE_CAP,
+) -> QualityFlags:
+    """Sample up to `sample_cap` images and check for red flags.
+
+    We sample rather than scan every image because the checks open pixels
+    (not just headers) and we want to stay snappy on 100k-image datasets.
+    """
+    import random as _random
+
+    if not paths_and_names:
+        return QualityFlags(sample_size=0)
+    if len(paths_and_names) > sample_cap:
+        rng = _random.Random(42)
+        sample = rng.sample(paths_and_names, sample_cap)
+    else:
+        sample = list(paths_and_names)
+
+    uniform: List[str] = []
+    blurry: List[str] = []
+    extreme: List[str] = []
+
+    def _task(pn: Tuple[Path, str]) -> Tuple[str, bool, bool, bool]:
+        return _inspect_quality(pn[0], pn[1])
+
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        for rel_name, is_uniform, is_blurry, is_ext in tqdm.tqdm(
+            pool.map(_task, sample),
+            total=len(sample),
+            desc="Scanning quality",
+            unit="images",
+        ):
+            if is_uniform:
+                uniform.append(rel_name)
+            if is_blurry:
+                blurry.append(rel_name)
+            if is_ext:
+                extreme.append(rel_name)
+
+    return QualityFlags(
+        sample_size=len(sample),
+        uniform_files=sorted(uniform),
+        blurry_files=sorted(blurry),
+        extreme_aspect_files=sorted(extreme),
+    )
+
+
+def _compute_near_duplicates(
+    paths_and_names: List[Tuple[Path, str]],
+    max_workers: int,
+    hamming_threshold: int = 5,
+) -> List[List[str]]:
+    """Group near-duplicate images via dHash. Returns [] if imagehash missing.
+
+    Optional dependency so the core insights tool stays lean. We group
+    filenames whose dHash Hamming distance is <= hamming_threshold.
+    """
+    try:
+        import imagehash  # type: ignore[import]
+    except ImportError:
+        logger.info(
+            "imagehash not installed; skipping near-duplicate image detection."
+        )
+        return []
+
+    def _hash(pn: Tuple[Path, str]) -> Tuple[str, Optional[object]]:
+        try:
+            with Image.open(pn[0]) as img:
+                return pn[1], imagehash.dhash(img)
+        except (UnidentifiedImageError, OSError):
+            return pn[1], None
+
+    hashes: Dict[str, object] = {}
+    with ThreadPoolExecutor(max_workers=max_workers) as pool:
+        for rel_name, h in tqdm.tqdm(
+            pool.map(_hash, paths_and_names),
+            total=len(paths_and_names),
+            desc="Hashing for near-duplicates",
+            unit="images",
+        ):
+            if h is not None:
+                hashes[rel_name] = h
+
+    # Group via union-find on pairwise Hamming distance. O(n^2) — fine for
+    # a few thousand images, would need LSH for millions.
+    names = sorted(hashes.keys())
+    parent = {n: n for n in names}
+
+    def find(x: str) -> str:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a: str, b: str) -> None:
+        parent[find(a)] = find(b)
+
+    for i, a in enumerate(names):
+        for b in names[i + 1 :]:
+            if hashes[a] - hashes[b] <= hamming_threshold:  # type: ignore[operator]
+                union(a, b)
+
+    groups: Dict[str, List[str]] = {}
+    for name in names:
+        groups.setdefault(find(name), []).append(name)
+    # Only return groups with >1 member.
+    return sorted(
+        (sorted(g) for g in groups.values() if len(g) > 1),
+        key=lambda g: -len(g),
+    )
+
+
+def analyze_images(
+    image_folder: Path,
+    max_workers: int = 16,
+    recursive: bool = False,
+    check_quality: bool = True,
+    find_near_duplicates: bool = False,
+) -> ImageAnalysis:
     filename_set: Set[str] = set()
     image_sizes = Counter[Tuple[int, int]]()
     image_widths: List[int] = []
     image_heights: List[int] = []
     corrupt_files: List[str] = []
+    filename_to_size: Dict[str, Tuple[int, int]] = {}
+    good_paths: List[Tuple[Path, str]] = []  # for downstream quality checks
 
-    # Currently we list non-recursively. We could add a flag to allow
-    # recursive listing in the future.
-    logger.info(f"Listing images in {image_folder}.")
+    logger.info(
+        f"Listing images in {image_folder} "
+        f"({'recursively' if recursive else 'top-level only'})."
+    )
+    glob_iter = image_folder.rglob("*.*") if recursive else image_folder.glob("*.*")
     sorted_paths = sorted(
-        path
-        for path in image_folder.glob("*.*")
-        if path.suffix.lower() in IMAGE_EXTENSIONS
+        path for path in glob_iter if path.suffix.lower() in IMAGE_EXTENSIONS
     )
     logger.info(f"Found {len(sorted_paths)} images.")
 
@@ -156,16 +349,26 @@ def analyze_images(image_folder: Path, max_workers: int = 16) -> ImageAnalysis:
             desc="Reading image sizes",
             unit="images",
         ):
+            # In recursive mode, use relative path so sub/foo.jpg and
+            # sub2/foo.jpg don't collide; otherwise keep the old basename-only
+            # behavior to stay backwards-compatible.
+            rel_name = (
+                str(image_path.relative_to(image_folder))
+                if recursive
+                else image_path.name
+            )
             if error is not None or size is None:
-                corrupt_files.append(image_path.name)
+                corrupt_files.append(rel_name)
                 logger.warning(
-                    f"Could not read {image_path.name}: {error or 'unknown error'}"
+                    f"Could not read {rel_name}: {error or 'unknown error'}"
                 )
                 continue
-            filename_set.add(image_path.name)
+            filename_set.add(rel_name)
+            filename_to_size[rel_name] = size
             image_sizes[size] += 1
             image_widths.append(size[0])
             image_heights.append(size[1])
+            good_paths.append((image_path, rel_name))
 
     # Note: width and height medians are computed independently, so the pair
     # is not guaranteed to correspond to any single image in the dataset.
@@ -175,6 +378,17 @@ def analyze_images(image_folder: Path, max_workers: int = 16) -> ImageAnalysis:
         int(np.median(image_heights)) if num_images > 0 else 0,
     )
 
+    quality_flags = (
+        _compute_quality_flags(good_paths, max_workers=max_workers)
+        if check_quality
+        else None
+    )
+    near_duplicate_groups = (
+        _compute_near_duplicates(good_paths, max_workers=max_workers)
+        if find_near_duplicates
+        else []
+    )
+
     return ImageAnalysis(
         num_images=num_images,
         image_folder=image_folder,
@@ -182,6 +396,9 @@ def analyze_images(image_folder: Path, max_workers: int = 16) -> ImageAnalysis:
         image_sizes=image_sizes,
         median_size=median_size,
         corrupt_files=sorted(corrupt_files),
+        filename_to_size=filename_to_size,
+        quality_flags=quality_flags,
+        near_duplicate_groups=near_duplicate_groups,
     )
 
 
@@ -216,6 +433,13 @@ def analyze_object_detections(
     }
     # Cache category id list so we don't re-materialize per label.
     category_ids = [cat.id for cat in label_input.get_categories()]
+    category_id_to_index = {cid: idx for idx, cid in enumerate(category_ids)}
+    num_classes = len(category_ids)
+    cooccurrence = (
+        np.zeros((num_classes, num_classes), dtype=np.int_) if num_classes > 0 else None
+    )
+    objects_per_filename: Dict[str, int] = {}
+    classes_per_filename: Dict[str, int] = {}
 
     # Iterate over labels and count objects.
     for label in tqdm.tqdm(
@@ -329,6 +553,20 @@ def analyze_object_detections(
                         )
                     )
 
+        # Class co-occurrence: which classes appear together in this image.
+        present_ids = {
+            obj.category.id for obj in label.objects if obj.category.id in category_id_to_index
+        }
+        if cooccurrence is not None:
+            present_indices = sorted(category_id_to_index[cid] for cid in present_ids)
+            for a_idx in present_indices:
+                for b_idx in present_indices:
+                    cooccurrence[a_idx, b_idx] += 1
+
+        # Per-image counters used by present.py for curated sample selection.
+        objects_per_filename[label.image.filename] = len(label.objects)
+        classes_per_filename[label.image.filename] = len(present_ids)
+
         # Update objects per image for classes.
         for category_id in category_ids:
             class_data[category_id].objects_per_image[
@@ -342,4 +580,8 @@ def analyze_object_detections(
         total=total_data,
         classes=class_data,
         duplicate_annotations=duplicate_annotations,
+        cooccurrence_matrix=cooccurrence,
+        cooccurrence_class_ids=list(category_ids),
+        objects_per_filename=objects_per_filename,
+        classes_per_filename=classes_per_filename,
     )
