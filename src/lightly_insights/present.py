@@ -5,7 +5,7 @@ import shutil
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Counter, Dict, List, Set, Tuple
+from typing import Any, Counter, Dict, List, Optional, Set, Tuple
 
 import tqdm
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
@@ -17,6 +17,18 @@ from lightly_insights.plots import PlotPaths
 # Classes with fewer than this fraction of total objects are flagged as
 # under-represented (see ImbalanceStats).
 UNDER_REPRESENTED_FRACTION = 0.01
+
+# Health score thresholds (tune these if your domain differs).
+MIN_OBJECTS_PER_CLASS = 30  # fewer than this = nearly unlearnable
+IDEAL_OBJECTS_PER_CLASS = 500  # at or above this = healthy
+# Weights (must sum to 1.0).
+HEALTH_WEIGHTS = {
+    "balance": 0.25,
+    "per_class_data": 0.20,
+    "annotation_quality": 0.25,
+    "image_quality": 0.20,
+    "leakage": 0.10,
+}
 
 logger = logging.getLogger(__name__)
 static_folder = Path(__file__).parent / "static"
@@ -46,6 +58,31 @@ class FilenameInsights:
     num_labels_no_image: int
     sample_filenames_no_label: List[str]
     sample_filenames_no_image: List[str]
+
+
+@dataclass(frozen=True)
+class Subscore:
+    """One slice of the health score: 0-100 plus a letter grade and reason."""
+
+    name: str
+    score: float  # 0-100, or -1 for "N/A" (not computable from available data)
+    grade: str  # "A"-"F" or "—"
+    detail: str  # human-readable explanation
+
+
+@dataclass(frozen=True)
+class HealthScore:
+    """Opinionated single-number dataset health read.
+
+    `overall` is None when the dataset doesn't have enough signal to score
+    (e.g. images-only reports). Subscores that were computable are still
+    populated in `subscores`.
+    """
+
+    overall: Optional[float]  # 0-100 or None
+    grade: str  # "A"-"F" or "—"
+    subscores: List[Subscore]
+    issues: List[str]  # actionable bullets, highest-priority first
 
 
 @dataclass(frozen=True)
@@ -93,12 +130,17 @@ def create_html_report(
         image_filename_set=image_analysis.filename_set,
         label_filename_set=od_analysis.filename_set,
     )
+    health_score = compute_health_score(
+        image_analysis=image_analysis, od_analysis=od_analysis
+    )
+
     report_data = dict(
         image_analysis=image_analysis,
         object_detection_analysis=od_analysis,
         image_insights=image_insights,
         object_detection_insights=object_detection_insights,
         filename_insights=filename_insights,
+        health_score=health_score,
         date_generated=datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z"),
     )
 
@@ -321,6 +363,260 @@ def _get_object_detection_insights(
         avg_images_per_class=avg_images_per_class,
         imbalance=imbalance,
         cooccurrence_plot=cooccurrence_plot_rel,
+    )
+
+
+def _letter_grade(score: float) -> str:
+    if score >= 90:
+        return "A"
+    if score >= 80:
+        return "B"
+    if score >= 70:
+        return "C"
+    if score >= 60:
+        return "D"
+    return "F"
+
+
+def compute_health_score(
+    image_analysis: ImageAnalysis,
+    od_analysis: ObjectDetectionAnalysis,
+    leakage_groups: Optional[List[object]] = None,
+) -> HealthScore:
+    """Roll the dataset's metrics into a single 0-100 health read.
+
+    `leakage_groups` is the output of `analyze.detect_cross_split_leakage`;
+    when None we assume no splits were configured and skip the leakage
+    subscore (weight redistributed proportionally).
+    """
+    subscores: List[Subscore] = []
+    issues: List[Tuple[int, str]] = []  # (priority, text), lower = more urgent
+
+    has_labels = od_analysis.total.num_objects > 0
+
+    # --- Balance subscore ---
+    if has_labels and len(od_analysis.classes) > 1:
+        counts = [c.num_objects for c in od_analysis.classes.values()]
+        imb = _compute_imbalance_stats(counts)
+        balance_score = 100.0 * imb.normalized_entropy
+        subscores.append(
+            Subscore(
+                name="Balance",
+                score=balance_score,
+                grade=_letter_grade(balance_score),
+                detail=(
+                    f"Normalized entropy {imb.normalized_entropy:.2f}, "
+                    f"top class = {100 * imb.top_class_share:.0f} % of objects"
+                ),
+            )
+        )
+        if balance_score < 70:
+            issues.append(
+                (
+                    10,
+                    f"Class imbalance is high — top class holds "
+                    f"{100 * imb.top_class_share:.0f} % of all objects. "
+                    f"Consider resampling or class-weighted loss.",
+                )
+            )
+    elif has_labels:
+        subscores.append(
+            Subscore(
+                name="Balance",
+                score=-1,
+                grade="—",
+                detail="Only 1 class — balance not applicable.",
+            )
+        )
+
+    # --- Per-class data subscore ---
+    # A detector's accuracy is bounded by its rarest class, so we score on
+    # the minimum count across classes rather than the median. Any class
+    # below the hard floor caps the subscore at D-grade regardless.
+    if has_labels and od_analysis.classes:
+        class_counts = [c.num_objects for c in od_analysis.classes.values()]
+        min_count = min(class_counts)
+        data_score = min(100.0, 100.0 * min_count / IDEAL_OBJECTS_PER_CLASS)
+        starved = [
+            c for c in od_analysis.classes.values() if c.num_objects < MIN_OBJECTS_PER_CLASS
+        ]
+        if starved:
+            data_score = min(data_score, 40.0)
+        detail = (
+            f"rarest class has {min_count} objects "
+            f"(ideal ≥ {IDEAL_OBJECTS_PER_CLASS})"
+        )
+        if starved:
+            detail += f"; {len(starved)} class(es) below {MIN_OBJECTS_PER_CLASS}"
+        subscores.append(
+            Subscore(
+                name="Per-class data",
+                score=data_score,
+                grade=_letter_grade(data_score),
+                detail=detail,
+            )
+        )
+        for cls in starved[:3]:
+            issues.append(
+                (
+                    5,
+                    f"Class “{cls.class_name}” has only {cls.num_objects} objects "
+                    f"(< {MIN_OBJECTS_PER_CLASS}) — collect more samples or "
+                    f"merge into a parent class.",
+                )
+            )
+
+    # --- Annotation quality subscore ---
+    if has_labels:
+        total_objs = od_analysis.total.num_objects
+        bad = (
+            od_analysis.total.tiny_object_count
+            + od_analysis.total.huge_object_count
+            + len(od_analysis.duplicate_annotations)
+            + len(od_analysis.class_conflicts)
+        )
+        ann_score = max(0.0, 100.0 * (1.0 - bad / total_objs)) if total_objs else 100.0
+        subscores.append(
+            Subscore(
+                name="Annotation quality",
+                score=ann_score,
+                grade=_letter_grade(ann_score),
+                detail=(
+                    f"{bad} flagged / {total_objs} objects "
+                    f"({100 * bad / total_objs:.1f} %)"
+                    if total_objs
+                    else "No objects."
+                ),
+            )
+        )
+        if od_analysis.class_conflicts:
+            issues.append(
+                (
+                    15,
+                    f"{len(od_analysis.class_conflicts)} class-conflict pair(s) "
+                    f"(IoU ≥ 0.5, different classes) — likely mislabels.",
+                )
+            )
+        if od_analysis.duplicate_annotations:
+            issues.append(
+                (
+                    20,
+                    f"{len(od_analysis.duplicate_annotations)} duplicate annotation "
+                    f"pair(s) — remove the doubles.",
+                )
+            )
+        if od_analysis.total.huge_object_count > 0:
+            issues.append(
+                (
+                    25,
+                    f"{od_analysis.total.huge_object_count} box(es) cover > 50 % "
+                    f"of their image — verify they aren't whole-scene mislabels.",
+                )
+            )
+
+    # --- Image quality subscore ---
+    qf = image_analysis.quality_flags
+    if qf is not None and qf.sample_size > 0:
+        # One image can trip multiple flags; count distinct filenames.
+        flagged_set = (
+            set(qf.uniform_files)
+            | set(qf.blurry_files)
+            | set(qf.extreme_aspect_files)
+            | set(image_analysis.corrupt_files)
+        )
+        flagged = len(flagged_set)
+        # Corrupt files are NOT in the sample_size (they failed the size pass),
+        # so we score against (sample_size + corrupt).
+        denom = qf.sample_size + len(image_analysis.corrupt_files)
+        img_score = max(0.0, 100.0 * (1.0 - flagged / denom)) if denom else 100.0
+        subscores.append(
+            Subscore(
+                name="Image quality",
+                score=img_score,
+                grade=_letter_grade(img_score),
+                detail=(
+                    f"{flagged} flagged / {denom} images checked "
+                    f"({100 * flagged / denom:.1f} %)"
+                ),
+            )
+        )
+        if image_analysis.corrupt_files:
+            issues.append(
+                (
+                    1,
+                    f"{len(image_analysis.corrupt_files)} image(s) are corrupt / "
+                    f"unreadable — exclude or replace them.",
+                )
+            )
+        if len(qf.blurry_files) > denom * 0.05:  # >5 % blurry
+            issues.append(
+                (
+                    30,
+                    f"{len(qf.blurry_files)} image(s) look blurry — review capture "
+                    f"quality before training.",
+                )
+            )
+    elif qf is not None:
+        subscores.append(
+            Subscore(
+                name="Image quality",
+                score=-1,
+                grade="—",
+                detail="No images inspected.",
+            )
+        )
+
+    # --- Leakage subscore ---
+    if leakage_groups is not None:
+        leak_count = len(leakage_groups)
+        leak_score = max(0.0, 100.0 - 20.0 * leak_count)
+        subscores.append(
+            Subscore(
+                name="Cross-split leakage",
+                score=leak_score,
+                grade=_letter_grade(leak_score),
+                detail=(
+                    "No near-duplicates across splits."
+                    if leak_count == 0
+                    else f"{leak_count} near-duplicate group(s) span multiple splits."
+                ),
+            )
+        )
+        if leak_count > 0:
+            issues.append(
+                (
+                    0,  # highest priority — invalidates eval
+                    f"{leak_count} near-duplicate group(s) found across splits — "
+                    f"this inflates eval accuracy. Dedupe before reporting numbers.",
+                )
+            )
+
+    # --- Overall ---
+    computable = [s for s in subscores if s.score >= 0]
+    if not computable:
+        overall: Optional[float] = None
+        overall_grade = "—"
+    else:
+        # Reweight only over computable subscores.
+        weights = {
+            "Balance": HEALTH_WEIGHTS["balance"],
+            "Per-class data": HEALTH_WEIGHTS["per_class_data"],
+            "Annotation quality": HEALTH_WEIGHTS["annotation_quality"],
+            "Image quality": HEALTH_WEIGHTS["image_quality"],
+            "Cross-split leakage": HEALTH_WEIGHTS["leakage"],
+        }
+        total_weight = sum(weights[s.name] for s in computable)
+        overall = sum(weights[s.name] * s.score for s in computable) / total_weight
+        overall_grade = _letter_grade(overall)
+
+    issues.sort(key=lambda p: p[0])
+    ordered_issues = [msg for _, msg in issues[:5]]
+
+    return HealthScore(
+        overall=overall,
+        grade=overall_grade,
+        subscores=subscores,
+        issues=ordered_issues,
     )
 
 

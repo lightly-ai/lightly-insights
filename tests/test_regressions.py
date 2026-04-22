@@ -570,3 +570,91 @@ def test_leakage_detector_returns_empty_without_imagehash(tmp_path: Path) -> Non
         "val": analyze.analyze_images(val),
     }
     assert analyze.detect_cross_split_leakage(analyses) == []
+
+
+# ---- health score card ----
+
+def _build_od(num_classes: int, per_class: int, img: "Image") -> analyze.ObjectDetectionAnalysis:
+    """Helper: build a synthetic OD analysis with N classes * K objects each."""
+    cats = [Category(id=i, name=f"c{i}") for i in range(num_classes)]
+    labels = []
+    for img_idx in range(per_class):
+        for c in cats:
+            labels.append(ImageObjectDetection(
+                image=Image(id=img_idx, filename=f"img_{img_idx}.png", width=500, height=500),
+                objects=[SingleObjectDetection(
+                    category=c, box=BoundingBox(xmin=10, ymin=10, xmax=100, ymax=100)
+                )],
+            ))
+    return analyze.analyze_object_detections(_FakeODInput(categories=cats, labels=labels))
+
+
+def test_health_score_ideal_dataset(tmp_path: Path) -> None:
+    # 3 balanced classes, 500 objects each, no quality flags.
+    img = Image(id=0, filename="a.png", width=500, height=500)
+    od = _build_od(num_classes=3, per_class=500, img=img)
+    folder = _make_image_folder(tmp_path, [(500, 500)])
+    image_analysis = analyze.analyze_images(folder, check_quality=False)
+    score = present.compute_health_score(image_analysis=image_analysis, od_analysis=od)
+    assert score.overall is not None
+    assert score.overall >= 90
+    assert score.grade == "A"
+
+
+def test_health_score_penalizes_starved_classes(tmp_path: Path) -> None:
+    # 1 class has 5 objects, rest have 500.
+    cats = [Category(id=0, name="rare"), Category(id=1, name="common"), Category(id=2, name="common2")]
+    labels = []
+    # rare class: 5 objects
+    for _ in range(5):
+        labels.append(ImageObjectDetection(
+            image=Image(id=0, filename="a.png", width=500, height=500),
+            objects=[SingleObjectDetection(
+                category=cats[0], box=BoundingBox(xmin=10, ymin=10, xmax=100, ymax=100)
+            )],
+        ))
+    # common classes: 500 each
+    for i in range(500):
+        for c in cats[1:]:
+            labels.append(ImageObjectDetection(
+                image=Image(id=i, filename=f"i_{i}.png", width=500, height=500),
+                objects=[SingleObjectDetection(
+                    category=c, box=BoundingBox(xmin=10, ymin=10, xmax=100, ymax=100)
+                )],
+            ))
+    od = analyze.analyze_object_detections(_FakeODInput(categories=cats, labels=labels))
+
+    folder = _make_image_folder(tmp_path, [(500, 500)])
+    image_analysis = analyze.analyze_images(folder, check_quality=False)
+    score = present.compute_health_score(image_analysis=image_analysis, od_analysis=od)
+    # Expect an issue mentioning "rare" class.
+    assert any("rare" in issue for issue in score.issues)
+    # Per-class-data subscore should be well below Balance subscore.
+    per_class_data = next(s for s in score.subscores if s.name == "Per-class data")
+    assert per_class_data.score < 50
+
+
+def test_health_score_hides_overall_when_no_labels(tmp_path: Path) -> None:
+    folder = _make_image_folder(tmp_path, [(100, 100), (200, 200)])
+    image_analysis = analyze.analyze_images(folder, check_quality=True)
+    empty_od = analyze.ObjectDetectionAnalysis(
+        num_images=0,
+        num_images_zero_objects=0,
+        filename_set=set(),
+        total=analyze.ClassAnalysis.create_empty(id=-1, name="[All classes]"),
+        classes={},
+    )
+    score = present.compute_health_score(image_analysis=image_analysis, od_analysis=empty_od)
+    # Only the image-quality subscore is computable.
+    computable = [s for s in score.subscores if s.score >= 0]
+    assert len(computable) == 1
+    assert computable[0].name == "Image quality"
+    assert score.overall is not None  # still computable from just image quality
+
+
+def test_health_score_letter_grades_boundaries() -> None:
+    from lightly_insights.present import _letter_grade
+    assert _letter_grade(100) == "A"
+    assert _letter_grade(89.9) == "B"
+    assert _letter_grade(70) == "C"
+    assert _letter_grade(59.9) == "F"
